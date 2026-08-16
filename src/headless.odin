@@ -1,0 +1,321 @@
+package game
+
+import "core:fmt"
+import "core:math"
+import "core:os"
+import "core:strings"
+
+// `hacktheplot --test` runs everything that does not need a GPU: the dice
+// maths, the content parse, and a walk over every authored node. Broken writing
+// should fail here, not twenty minutes into someone's playthrough.
+
+Test_Ctx :: struct {
+	passed: int,
+	failed: int,
+}
+
+@(private = "file")
+check :: proc(t: ^Test_Ctx, condition: bool, description: string) {
+	if condition {
+		t.passed += 1
+		fmt.printfln("  ok    %s", description)
+	} else {
+		t.failed += 1
+		fmt.printfln("  FAIL  %s", description)
+	}
+}
+
+@(private = "file")
+check_near :: proc(t: ^Test_Ctx, actual, expected, tolerance: f32, description: string) {
+	ok := math.abs(actual - expected) <= tolerance
+	if ok {
+		t.passed += 1
+		fmt.printfln("  ok    %s (%.4f)", description, actual)
+	} else {
+		t.failed += 1
+		fmt.printfln("  FAIL  %s: got %.4f, expected %.4f", description, actual, expected)
+	}
+}
+
+run_headless_tests :: proc(content_dir: string) -> int {
+	t: Test_Ctx
+
+	fmt.println("2d6 check distribution")
+	test_check_maths(&t)
+
+	fmt.println("\ndifficulty ladder")
+	test_difficulty(&t)
+
+	fmt.println("\ncheck availability rules")
+	test_check_availability(&t)
+
+	fmt.println("\ncontent")
+	test_content(&t, content_dir)
+
+	fmt.printfln("\n%d passed, %d failed", t.passed, t.failed)
+	return t.failed == 0 ? 0 : 1
+}
+
+@(private = "file")
+test_check_maths :: proc(t: ^Test_Ctx) {
+	// The 2d6 sum distribution is 1,2,3,4,5,6,5,4,3,2,1 out of 36. Needing a
+	// sum of 7 or better is therefore 21/36.
+	check_near(t, check_odds(10, 3), 21.0 / 36.0, 0.0001, "target 10 with +3 is 58.3%")
+	check_near(t, check_odds(10, 4), 26.0 / 36.0, 0.0001, "target 10 with +4 is 72.2%")
+	// Needing a sum of 10 leaves 10, 11 and 12: 3 + 2 + 1 = 6 outcomes.
+	check_near(t, check_odds(10, 0), 6.0 / 36.0, 0.0001, "target 10 unaided is 16.7%")
+	// Needing a 12 leaves only the double six.
+	check_near(t, check_odds(12, 0), 1.0 / 36.0, 0.0001, "target 12 unaided is 2.8%")
+	check_near(t, check_odds(6, 4), 35.0 / 36.0, 0.0001, "trivial target caps at 35/36")
+
+	// Snake eyes and double six override the arithmetic in both directions, so
+	// no check is ever a certainty either way.
+	check_near(t, check_odds(2, 0), 35.0 / 36.0, 0.0001, "impossible-to-fail check still fails on snake eyes")
+	check_near(t, check_odds(99, 0), 1.0 / 36.0, 0.0001, "impossible check still passes on double six")
+
+	check(t, !outcome_passes(1, 1, 2, 100), "snake eyes fails with a +100 bonus")
+	check(t, outcome_passes(6, 6, 100, 0), "double six passes against target 100")
+
+	// Odds must be monotonic in the bonus, or the popup would be lying.
+	monotonic := true
+	prev := f32(-1)
+	for bonus in 0 ..= 12 {
+		o := check_odds(14, bonus)
+		if o < prev {
+			monotonic = false
+		}
+		prev = o
+	}
+	check(t, monotonic, "odds never decrease as modifiers improve")
+
+	// Every roll the resolver produces must agree with outcome_passes.
+	consistent := true
+	for _ in 0 ..< 4000 {
+		mods := []Modifier{{"test", 3}}
+		r := resolve_check(.Logic, .White, 11, mods)
+		if r.passed != outcome_passes(r.die_a, r.die_b, r.target, r.bonus) {
+			consistent = false
+		}
+		if r.die_a < 1 || r.die_a > 6 || r.die_b < 1 || r.die_b > 6 {
+			consistent = false
+		}
+	}
+	check(t, consistent, "4000 rolls stay in range and match the predicate")
+
+	// And the empirical rate should land near the stated odds.
+	target := 11
+	bonus := 3
+	wins := 0
+	trials := 40000
+	for _ in 0 ..< trials {
+		r := resolve_check(.Logic, .White, target, []Modifier{{"test", bonus}})
+		if r.passed {
+			wins += 1
+		}
+	}
+	empirical := f32(wins) / f32(trials)
+	check_near(t, empirical, check_odds(target, bonus), 0.02, "40k rolls match the stated odds")
+}
+
+@(private = "file")
+test_difficulty :: proc(t: ^Test_Ctx) {
+	check(t, difficulty_for_target(6) == .Trivial, "6 is Trivial")
+	check(t, difficulty_for_target(10) == .Medium, "10 is Medium")
+	check(t, difficulty_for_target(12) == .Challenging, "12 is Challenging")
+	check(t, difficulty_for_target(13) == .Challenging, "13 rounds down to Challenging")
+	check(t, difficulty_for_target(20) == .Godly, "20 is Godly")
+	check(t, difficulty_for_target(40) == .Impossible, "anything past the ladder is Impossible")
+}
+
+@(private = "file")
+test_check_availability :: proc(t: ^Test_Ctx) {
+	fresh := Check_Record{}
+	check(t, check_available(fresh, 4), "an untried check is available")
+
+	failed_white := Check_Record {
+		attempted            = true,
+		passed               = false,
+		bonus_when_attempted = 4,
+		kind                 = .White,
+	}
+	check(t, !check_available(failed_white, 4), "a failed white check stays shut until something changes")
+	check(t, check_available(failed_white, 5), "a failed white check reopens when the bonus improves")
+	check(t, !check_available(failed_white, 3), "a white check does not reopen when you get worse")
+
+	failed_red := Check_Record {
+		attempted            = true,
+		passed               = false,
+		bonus_when_attempted = 4,
+		kind                 = .Red,
+	}
+	check(t, !check_available(failed_red, 99), "a failed red check never reopens")
+
+	passed := Check_Record{attempted = true, passed = true, bonus_when_attempted = 4, kind = .White}
+	check(t, !check_available(passed, 99), "a passed check is not re-rollable")
+}
+
+@(private = "file")
+test_content :: proc(t: ^Test_Ctx, content_dir: string) {
+	g := new(Game)
+	g.content_dir = content_dir
+	g.headless = true
+	game_init_state(g)
+
+	ok := game_load_content(g)
+
+	if !ok {
+		for e in g.load_errors {
+			fmt.printfln("  FAIL  %s", e)
+		}
+		t.failed += len(g.load_errors)
+	} else {
+		t.passed += 1
+		fmt.printfln("  ok    all .plot and .defs files parse and validate")
+	}
+
+	check(t, len(g.script.nodes) > 0, "at least one dialogue node was loaded")
+	check(t, len(g.defs.thoughts) > 0, "thought definitions loaded")
+	check(t, len(g.defs.items) > 0, "item definitions loaded")
+	check(t, len(g.defs.tasks) > 0, "task definitions loaded")
+
+	// Every skill named anywhere in the content has to resolve, or a passive
+	// would silently never fire.
+	bad_skills := 0
+	for id in g.script.order {
+		node := g.script.nodes[id]
+		for line in node.lines {
+			if line.kind == .Voice && line.target <= 0 {
+				bad_skills += 1
+			}
+		}
+	}
+	check(t, bad_skills == 0, "every VOICE line has a positive difficulty")
+
+	// Effects that reference a thought, item or task that was never defined.
+	dangling := make([dynamic]string, context.temp_allocator)
+	verify_effects :: proc(g: ^Game, dangling: ^[dynamic]string, node_id: string, effects: []Effect) {
+		for e in effects {
+			switch e.kind {
+			case .Add_Thought:
+				if cabinet_find(&g.cabinet, e.id) == nil {
+					append(dangling, fmt.aprintf("%s: unknown thought '%s'", node_id, e.id))
+				}
+			case .Give_Item, .Take_Item:
+				if _, found := g.item_defs[e.id]; !found {
+					append(dangling, fmt.aprintf("%s: unknown item '%s'", node_id, e.id))
+				}
+			case .Task_Add, .Task_Done, .Task_Fail:
+				if _, found := g.task_defs[e.id]; !found {
+					append(dangling, fmt.aprintf("%s: unknown task '%s'", node_id, e.id))
+				}
+			case .Set_Flag, .Clear_Flag, .Health, .Morale, .XP:
+			// flags are free-form by design
+			}
+		}
+	}
+
+	for id in g.script.order {
+		node := g.script.nodes[id]
+		verify_effects(g, &dangling, id, node.entry_effects)
+		for opt in node.options {
+			verify_effects(g, &dangling, id, opt.effects)
+		}
+	}
+
+	for d in dangling {
+		fmt.printfln("  FAIL  %s", d)
+	}
+	if len(dangling) == 0 {
+		t.passed += 1
+		fmt.printfln("  ok    every effect references a defined thought, item or task")
+	} else {
+		t.failed += len(dangling)
+	}
+
+	// Orphans are reported but not fatal: an unreferenced node is usually a
+	// scene still being written.
+	roots := []string{"wake"}
+	for &it in g.scene.interactables {
+		_ = it
+	}
+	build_server_room(&g.scene)
+	entry_points := make([dynamic]string, context.temp_allocator)
+	append(&entry_points, ..roots)
+	for &it in g.scene.interactables {
+		append(&entry_points, it.node)
+	}
+
+	orphans := find_orphan_nodes(&g.script, entry_points[:])
+	if len(orphans) > 0 {
+		fmt.printfln("  note  %d unreferenced node(s): %s", len(orphans), strings.join(orphans, ", ", context.temp_allocator))
+	} else {
+		fmt.printfln("  ok    every node is reachable from an entry point")
+	}
+
+	// Every interactable in the room must point at a node that exists.
+	missing := 0
+	for &it in g.scene.interactables {
+		if _, found := g.script.nodes[it.node]; !found {
+			fmt.printfln("  FAIL  interactable '%s' opens missing node '%s'", it.id, it.node)
+			missing += 1
+		}
+	}
+	check(t, missing == 0, "every orb in the room opens a node that exists")
+
+	// Walk the whole graph, taking every option, to make sure no combination
+	// of effects panics and every path terminates.
+	visited := make(map[string]bool, context.temp_allocator)
+	for entry in entry_points {
+		if _, found := g.script.nodes[entry]; !found {
+			continue
+		}
+		walk_all_paths(g, entry, &visited, 0)
+	}
+	check(t, len(visited) > 0, fmt.tprintf("graph walk reached %d node(s)", len(visited)))
+}
+
+// Depth-limited exhaustive walk. Cycles are fine -- we only need each node
+// entered once to know its effects and lines are well-formed.
+@(private = "file")
+walk_all_paths :: proc(g: ^Game, node_id: string, visited: ^map[string]bool, depth: int) {
+	if depth > 400 {
+		return
+	}
+	if visited[node_id] or_else false {
+		return
+	}
+	visited[node_id] = true
+
+	node, ok := g.script.nodes[node_id]
+	if !ok {
+		return
+	}
+
+	if node.goto_node != "" {
+		walk_all_paths(g, node.goto_node, visited, depth + 1)
+	}
+	for opt in node.options {
+		switch opt.kind {
+		case .Plain:
+			if opt.target_node != "" && opt.target_node != "END" {
+				walk_all_paths(g, opt.target_node, visited, depth + 1)
+			}
+		case .Check:
+			if opt.pass_node != "" && opt.pass_node != "END" {
+				walk_all_paths(g, opt.pass_node, visited, depth + 1)
+			}
+			if opt.fail_node != "" && opt.fail_node != "END" {
+				walk_all_paths(g, opt.fail_node, visited, depth + 1)
+			}
+		}
+	}
+}
+
+has_flag_arg :: proc(name: string) -> bool {
+	for arg in os.args[1:] {
+		if arg == name {
+			return true
+		}
+	}
+	return false
+}

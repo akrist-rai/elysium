@@ -1,0 +1,130 @@
+# Thoughts, items and tasks for the Server Room.
+# Format is documented in src/defs.odin.
+
+# ---------------------------------------------------------------------------
+# THOUGHTS
+# ---------------------------------------------------------------------------
+
+:: thought harmonic_greed
+NAME       The Harmonic Curve
+PREMISE    The scoring is p over k times the sum of one-over-i. It means the
+PREMISE    first person to solve a question takes the largest slice and every
+PREMISE    solver after gets a thinner one. You keep turning it over. It is not
+PREMISE    a scoring rule, it is a motive with an equation attached.
+CONCLUSION You understand now what the curve is actually for. It does not
+CONCLUSION reward being right. It rewards being right FIRST, and it punishes
+CONCLUSION everyone who was merely right. Somebody in this building read that
+CONCLUSION formula and saw an opportunity in it.
+BEATS      5
+RESEARCH   Logic -1
+BONUS      Logic 2
+BONUS      Visual Calculus 1
+
+:: thought the_invigilator
+NAME       The Man Who Was Supposed To Be Watching
+PREMISE    There was a job. It had one requirement, which was to be present and
+PREMISE    awake, and you have been unable to establish that you did either.
+PREMISE    The thought sits behind your eyes and will not be looked at directly.
+CONCLUSION You were supposed to be watching. You were not watching. Whatever
+CONCLUSION happened here happened in the space you left. That is a fact about
+CONCLUSION you and it is not going to stop being one, so you may as well pick
+CONCLUSION it up and carry it usefully.
+BEATS      7
+RESEARCH   Volition -1
+RESEARCH   Composure -1
+BONUS      Volition 2
+BONUS      Authority 1
+BONUS      Empathy 1
+
+:: thought cold_iron_stomach
+NAME       Cold Iron Stomach
+PREMISE    You have decided you are the sort of person who can look at a body
+PREMISE    without flinching. You are testing the claim. It is going badly and
+PREMISE    you are not stopping.
+CONCLUSION You are not brave. You are just slow to react, and you have learned
+CONCLUSION to present the delay as courage. It works well enough on other
+CONCLUSION people, and tonight it worked on you.
+BEATS      4
+RESEARCH   Empathy -1
+BONUS      Pain Threshold 2
+BONUS      Half Light 1
+
+:: thought the_second_cup
+NAME       The Second Cup
+PREMISE    Two people drank coffee in a room that was supposed to hold one.
+PREMISE    You cannot stop assembling the second person out of the residue they
+PREMISE    left: a rim mark, a chair angle, a door held open with a wedge.
+CONCLUSION There is a way of reading a room where every object is a sentence
+CONCLUSION somebody left unfinished. You have got the knack of it now, and you
+CONCLUSION are not sure you will be able to switch it off afterwards.
+BEATS      5
+BONUS      Perception 2
+BONUS      Shivers 1
+
+# ---------------------------------------------------------------------------
+# ITEMS
+# ---------------------------------------------------------------------------
+
+:: item headphones
+NAME   Someone's Headphones
+DESC   Over-ear, one cup worn through to the foam. Still faintly warm. There is
+DESC   a sound in them if you hold them to your head, which you have done twice
+DESC   now without deciding to.
+EQUIP  yes
+MOD    Perception 1
+MOD    Shivers 1
+MOD    Composure -1
+
+:: item snapped_badge
+NAME   A Snapped ID Badge
+DESC   A staff access card, broken cleanly across the chip. The photograph is
+DESC   intact. The name has been scraped, but not carefully, and not by
+DESC   somebody who had much time.
+EQUIP  yes
+MOD    Authority 1
+MOD    Interfacing 1
+
+:: item hip_flask
+NAME   Your Own Hip Flask
+DESC   Empty. It has your initials on it, which is how you know they are your
+DESC   initials. It was full at the start of the shift, and the shift is not
+DESC   over.
+EQUIP  yes
+MOD    Electrochemistry 2
+MOD    Volition -1
+
+:: item wedge
+NAME   A Rubber Door Wedge
+DESC   Standard issue, grey, chewed at the thin end. It was under the fire door
+DESC   and then it was not, and the person who moved it did so twice.
+EQUIP  no
+
+# ---------------------------------------------------------------------------
+# TASKS
+# ---------------------------------------------------------------------------
+
+:: task establish_self
+TITLE  Work out who you are
+DETAIL You woke on the floor of a server room with a name you cannot produce on
+DETAIL demand. Start there. Everything else is downstream of it.
+
+:: task check_the_contestant
+TITLE  Find out what is wrong with the contestant
+DETAIL She is face down on the desk and she has not moved. Establish, before
+DETAIL anything else in this room, whether she is breathing.
+
+:: task explain_the_freeze
+TITLE  Explain why the scoreboard stopped at 02:14
+DETAIL The board has not updated in three quarters of an hour. Nothing else in
+DETAIL the building has stopped. Find out what is holding it.
+
+:: task find_the_intruder
+TITLE  Find who submitted the final flag
+DETAIL The last flag was accepted eleven minutes ago from an account called
+DETAIL guest_0, which was never registered and never logged in. Somebody put
+DETAIL that row in by hand.
+
+:: task name_them
+TITLE  Say the name out loud
+DETAIL You know who did it. Knowing is the easy half. The sysadmin is standing
+DETAIL right there and is going to hear you either be right or be wrong.
