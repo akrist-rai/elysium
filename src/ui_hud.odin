@@ -4,36 +4,14 @@ import "core:fmt"
 import "core:math"
 import rl "vendor:raylib"
 
-// Health and Morale are drawn as filled orbs rather than bars. They are small,
-// they sit low in the corner, and when one of them drops the whole frame
-// flinches -- see g.damage_flash.
+// The world HUD reads like a field note pinned over the painting: enough
+// information to play, but never enough chrome to compete with the room.
 
 ORB_R :: 30.0
 
 draw_hud :: proc(g: ^Game) {
-	sh := f32(rl.GetScreenHeight())
-
-	base_y := sh - 58
-	draw_stat_orb(
-		g,
-		{56, base_y},
-		g.player.health,
-		health_max(g.player),
-		COL_HEALTH,
-		"HEALTH",
-	)
-	draw_stat_orb(
-		g,
-		{56 + ORB_R * 2 + 34, base_y},
-		g.player.morale,
-		morale_max(g.player),
-		COL_MORALE,
-		"MORALE",
-	)
-
-	draw_level_readout(g, {56 + (ORB_R * 2 + 34) * 2, base_y})
-
-	draw_top_bar(g)
+	draw_case_header(g)
+	draw_compact_vitals(g)
 	draw_hints(g)
 
 	if g.reload_notice > 0 {
@@ -43,6 +21,37 @@ draw_hud :: proc(g: ^Game) {
 	if g.damage_flash > 0 {
 		draw_damage_flash(g)
 	}
+}
+
+draw_case_header :: proc(g: ^Game) {
+	panel := rl.Rectangle{20, 18, 330, 82}
+	draw_panel(panel, fade(COL_INK, 0.86), fade(COL_KEY, 0.44))
+	draw_text(g.font_small, "CASE 01  //  TECHHUNT NIGHT", {panel.x + 16, panel.y + 13}, 13, fade(COL_KEY, 0.90), 1.6)
+	draw_text(g.font_title, "THE LOCKED SCOREBOARD", {panel.x + 16, panel.y + 32}, 20, COL_PAPER, 1.0)
+	draw_text(g.font_small, "SERVER ROOM B", {panel.x + 16, panel.y + 60}, 13, fade(COL_NARRATION, 0.86), 1.2)
+	clock := clock_text(g)
+	cm := measure(g.font_title, clock, 20)
+	draw_text(g.font_title, clock, {panel.x + panel.width - cm.x - 14, panel.y + 52}, 20, COL_KEY, 0.8)
+}
+
+draw_compact_vitals :: proc(g: ^Game) {
+	sw := f32(rl.GetScreenWidth())
+	panel := rl.Rectangle{sw - 236, 18, 216, 82}
+	draw_panel(panel, fade(COL_INK, 0.86), fade(COL_PANEL_EDGE, 0.9))
+	draw_vital_row(g, {panel.x + 14, panel.y + 13}, panel.width - 28, "HEALTH", g.player.health, health_max(g.player), COL_HEALTH)
+	draw_vital_row(g, {panel.x + 14, panel.y + 45}, panel.width - 28, "MORALE", g.player.morale, morale_max(g.player), COL_MORALE)
+}
+
+draw_vital_row :: proc(g: ^Game, pos: rl.Vector2, w: f32, label: string, value, maximum: int, col: rl.Color) {
+	draw_text(g.font_small, label, pos, 13, fade(col, 0.94), 1.1)
+	num := fmt.tprintf("%d/%d", value, maximum)
+	nm := measure(g.font_small, num, 13)
+	draw_text(g.font_small, num, {pos.x + w - nm.x, pos.y}, 13, COL_PAPER, 0.4)
+	bar_x := pos.x + 67
+	bar_w := w - 112
+	frac := maximum > 0 ? f32(value) / f32(maximum) : f32(0)
+	rl.DrawRectangleRec({bar_x, pos.y + 5, bar_w, 5}, fade(COL_PANEL_EDGE, 0.7))
+	rl.DrawRectangleRec({bar_x, pos.y + 5, bar_w * clamp(frac, 0, 1), 5}, col)
 }
 
 draw_stat_orb :: proc(
@@ -147,9 +156,10 @@ draw_hints :: proc(g: ^Game) {
 		return
 	}
 
-	hint := "click to walk  -  click an orb to look  -  [C] sheet  [J] journal  [I] items  [F5] reload"
+	hint := "[C] skill voices    [T] thoughts    [J] casebook    [I] pockets"
 	m := measure(g.font_small, hint, 14)
-	draw_text(g.font_small, hint, {sw - m.x - 26, sh - 32}, 14, fade(COL_LOCKED, 0.85), 0.6)
+	draw_panel({sw - m.x - 36, sh - 44, m.x + 20, 28}, fade(COL_INK, 0.78), fade(COL_PANEL_EDGE, 0.64))
+	draw_text(g.font_small, hint, {sw - m.x - 26, sh - 36}, 14, fade(COL_PAPER, 0.74), 0.6)
 }
 
 draw_reload_notice :: proc(g: ^Game) {

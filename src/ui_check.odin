@@ -22,7 +22,7 @@ check_popup_rect :: proc(g: ^Game) -> rl.Rectangle {
 	// modifier, the target/odds block, and the prompt, plus padding.
 	h := 268 + rows * 24
 	if d.pending.state != .Presenting {
-		h += 186 // dice, verdict, arithmetic and the prompt beneath them
+		h += 150 // dice, verdict, arithmetic and the prompt beneath them
 		if d.pending.state == .Revealed && d.pending.result.critical {
 			h += 24 // the extra line a double six or snake eyes earns
 		}

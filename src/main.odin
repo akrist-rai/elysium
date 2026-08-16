@@ -1,6 +1,7 @@
 package game
 
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -156,6 +157,49 @@ load_presentation :: proc(g: ^Game) {
 	g.font_small = load_font_or_default(fmt.tprintf("%s/fonts/body-condensed.ttf", g.assets_dir))
 	g.font_title = load_font_or_default(fmt.tprintf("%s/fonts/title.ttf", g.assets_dir))
 
+	// Key art gives the title screen an immediate sense of place before the
+	// player sees the deliberately abstracted isometric room.
+	art_path := fmt.tprintf("%s/art/server_room_key_art.png", g.assets_dir)
+	if os.exists(art_path) {
+		g.title_art = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", art_path))))
+		g.title_art_loaded = g.title_art.id != 0
+		if g.title_art_loaded {
+			rl.SetTextureFilter(g.title_art, .BILINEAR)
+		}
+	}
+	portrait_path := fmt.tprintf("%s/art/detective_portrait.png", g.assets_dir)
+	if os.exists(portrait_path) {
+		g.detective_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", portrait_path))))
+		g.detective_portrait_loaded = g.detective_portrait.id != 0
+		if g.detective_portrait_loaded {
+			rl.SetTextureFilter(g.detective_portrait, .BILINEAR)
+		}
+	}
+	sysadmin_path := fmt.tprintf("%s/art/sysadmin_portrait.png", g.assets_dir)
+	if os.exists(sysadmin_path) {
+		g.sysadmin_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", sysadmin_path))))
+		g.sysadmin_portrait_loaded = g.sysadmin_portrait.id != 0
+		if g.sysadmin_portrait_loaded {
+			rl.SetTextureFilter(g.sysadmin_portrait, .BILINEAR)
+		}
+	}
+	priya_path := fmt.tprintf("%s/art/priya_portrait.png", g.assets_dir)
+	if os.exists(priya_path) {
+		g.priya_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", priya_path))))
+		g.priya_portrait_loaded = g.priya_portrait.id != 0
+		if g.priya_portrait_loaded {
+			rl.SetTextureFilter(g.priya_portrait, .BILINEAR)
+		}
+	}
+	world_path := fmt.tprintf("%s/art/server_room_topdown.png", g.assets_dir)
+	if os.exists(world_path) {
+		g.world_art = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", world_path))))
+		g.world_art_loaded = g.world_art.id != 0
+		if g.world_art_loaded {
+			rl.SetTextureFilter(g.world_art, .BILINEAR)
+		}
+	}
+
 	g.scene_rt = rl.LoadRenderTexture(i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()))
 	rl.SetTextureFilter(g.scene_rt.texture, .BILINEAR)
 
@@ -164,6 +208,21 @@ load_presentation :: proc(g: ^Game) {
 
 unload_presentation :: proc(g: ^Game) {
 	painterly_unload(&g.painterly)
+	if g.title_art_loaded {
+		rl.UnloadTexture(g.title_art)
+	}
+	if g.detective_portrait_loaded {
+		rl.UnloadTexture(g.detective_portrait)
+	}
+	if g.sysadmin_portrait_loaded {
+		rl.UnloadTexture(g.sysadmin_portrait)
+	}
+	if g.priya_portrait_loaded {
+		rl.UnloadTexture(g.priya_portrait)
+	}
+	if g.world_art_loaded {
+		rl.UnloadTexture(g.world_art)
+	}
 	rl.UnloadRenderTexture(g.scene_rt)
 }
 
@@ -198,7 +257,9 @@ update :: proc(g: ^Game, dt: f32) {
 	case .Title:
 		update_title(g)
 	case .World:
-		camera_update(&g.camera, dt, true)
+		// The top-down room is a composed 2D scene, not a movable diorama. Keep
+		// the old camera path available only for the procedural fallback.
+		camera_update(&g.camera, dt, !g.world_art_loaded)
 		world_update(g, dt)
 		world_handle_input(g)
 		// Walking into an interactable opens its dialogue from player_arrive.
@@ -362,9 +423,25 @@ draw_title :: proc(g: ^Game) {
 	sw := f32(rl.GetScreenWidth())
 	sh := f32(rl.GetScreenHeight())
 
-	rl.DrawRectangleRec({0, 0, sw, sh}, fade(rl.BLACK, 0.78))
+	if g.title_art_loaded {
+		src := rl.Rectangle{0, 0, f32(g.title_art.width), f32(g.title_art.height)}
+		rl.DrawTexturePro(g.title_art, src, {0, 0, sw, sh}, {0, 0}, 0, rl.WHITE)
+	} else {
+		rl.DrawRectangleRec({0, 0, sw, sh}, fade(rl.BLACK, 0.78))
+	}
 
-	y := sh * 0.26
+	// A dark, painted-feeling veil keeps the words readable while letting the
+	// crime scene keep breathing at the edges of the screen.
+	for i := 0; i < 9; i += 1 {
+		t := f32(i) / 8.0
+		inset := t * 38
+		rl.DrawRectangleLinesEx({inset, inset, sw - inset*2, sh - inset*2}, 18, fade(COL_INK, 0.055))
+	}
+	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_INK, 0.38))
+	panel_w := math.min(sw * 0.56, 780)
+	draw_panel({(sw - panel_w) * 0.5, sh * 0.15, panel_w, sh * 0.70}, fade(COL_INK, 0.72), fade(COL_PAPER, 0.20))
+
+	y := sh * 0.22
 
 	title := "HACK THE PLOT"
 	tm := measure(g.font_title, title, 74, 6)
@@ -374,7 +451,9 @@ draw_title :: proc(g: ^Game) {
 	sub := "a night at TechHunt"
 	sm := measure(g.font, sub, 22)
 	draw_text(g.font, sub, {(sw - sm.x) * 0.5, y}, 22, fade(COL_NARRATION, 0.9))
-	y += 70
+	y += 48
+	draw_hline((sw - panel_w) * 0.5 + 38, y, panel_w - 76, fade(COL_KEY, 0.45))
+	y += 30
 
 	lines := []string {
 		"The scoreboard has been frozen since 02:14.",
@@ -390,7 +469,7 @@ draw_title :: proc(g: ^Game) {
 		y += 28
 	}
 
-	y += 40
+	y += 24
 	prompt := save_exists(g) ? "[enter] wake up      [L] resume" : "[enter] wake up"
 	pm := measure(g.font_small, prompt, 18)
 	draw_text(g.font_small, prompt, {(sw - pm.x) * 0.5, y}, 18, COL_SYSTEM, 1.4)

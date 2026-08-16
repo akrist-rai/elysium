@@ -31,6 +31,9 @@ Interactable :: struct {
 	hide_when:  string, // flag that hides it once set
 	seen:       bool,
 	is_person:  bool,
+	// Screen anchor in the 1600x900 top-down painting. Gameplay still uses the
+	// grid position; this only puts the evidence halo over the painted object.
+	topdown_pos: rl.Vector2,
 }
 
 Light :: struct {
@@ -61,6 +64,33 @@ Player :: struct {
 	bob:      f32, // walk cycle phase, drives the shoulder sway
 	// Set when a walk was ordered in order to reach an interactable.
 	pending_interactable: int,
+}
+
+// The playable painting uses the same authored grid as navigation, but renders
+// it as an orthographic top-down room. Coordinates target the 1600x900 master.
+topdown_world_to_screen :: proc(g: ^Game, p: rl.Vector2) -> rl.Vector2 {
+	sx := f32(rl.GetScreenWidth()) / 1600.0
+	sy := f32(rl.GetScreenHeight()) / 900.0
+	return {
+		(80.0 + p.x*78.0) * sx,
+		(72.0 + p.y*55.0) * sy,
+	}
+}
+
+topdown_screen_to_world :: proc(s: rl.Vector2) -> rl.Vector2 {
+	sx := f32(rl.GetScreenWidth()) / 1600.0
+	sy := f32(rl.GetScreenHeight()) / 900.0
+	return {(s.x/sx - 80.0) / 78.0, (s.y/sy - 72.0) / 55.0}
+}
+
+interactable_screen_pos :: proc(g: ^Game, it: Interactable) -> rl.Vector2 {
+	if g.world_art_loaded {
+		if it.topdown_pos.x > 0 || it.topdown_pos.y > 0 {
+			return {it.topdown_pos.x * f32(rl.GetScreenWidth()) / 1600.0, it.topdown_pos.y * f32(rl.GetScreenHeight()) / 900.0}
+		}
+		return topdown_world_to_screen(g, it.pos)
+	}
+	return world_to_screen(g.camera, it.pos.x, it.pos.y, it.height)
 }
 
 PLAYER_SPEED :: 3.4
@@ -173,7 +203,7 @@ world_pick_interactable :: proc(g: ^Game, mouse: rl.Vector2) -> int {
 		if !interactable_visible(g, it) {
 			continue
 		}
-		sp := world_to_screen(g.camera, it.pos.x, it.pos.y, it.height)
+		sp := interactable_screen_pos(g, it)
 		d := rl.Vector2Distance(sp, mouse)
 		if d < best_dist {
 			best_dist = d
@@ -229,7 +259,7 @@ world_handle_input :: proc(g: ^Game) {
 		return
 	}
 
-	target := screen_to_world(g.camera, mouse)
+	target := g.world_art_loaded ? topdown_screen_to_world(mouse) : screen_to_world(g.camera, mouse)
 	if nav_walkable_at(&g.scene.nav, target) {
 		player_order_move(g, target)
 		g.click_marker = target

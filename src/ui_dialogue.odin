@@ -5,9 +5,9 @@ import "core:math"
 import "core:strings"
 import rl "vendor:raylib"
 
-// The dialogue panel sits on the right and leaves the room visible on the left,
-// because the room is still talking to you while people are.
-DIALOGUE_PANEL_FRACTION :: f32(0.46)
+// Dialogue becomes a 2D investigation layout: prose holds the lower-left,
+// while a full-height dossier appears on the right for whoever owns the scene.
+DIALOGUE_PANEL_FRACTION :: f32(0.61)
 DIALOGUE_PAD :: f32(26.0)
 LOG_FONT :: f32(18.0)
 LOG_LINE :: f32(25.0)
@@ -17,8 +17,13 @@ OPT_LINE :: f32(24.0)
 dialogue_panel_rect :: proc() -> rl.Rectangle {
 	sw := f32(rl.GetScreenWidth())
 	sh := f32(rl.GetScreenHeight())
-	w := sw * DIALOGUE_PANEL_FRACTION
-	return {sw - w, 0, w, sh}
+	return {30, sh * 0.49, sw * DIALOGUE_PANEL_FRACTION, sh * 0.47}
+}
+
+dialogue_sidebar_rect :: proc() -> rl.Rectangle {
+	sw := f32(rl.GetScreenWidth())
+	sh := f32(rl.GetScreenHeight())
+	return {sw * 0.665, 34, sw * 0.305, sh - 68}
 }
 
 // Height of one log entry, including its speaker line.
@@ -39,16 +44,21 @@ draw_dialogue :: proc(g: ^Game) {
 	}
 
 	panel := dialogue_panel_rect()
-	rl.DrawRectangleRec(panel, rl.Color{14, 15, 17, 244})
-	rl.DrawRectangleRec({panel.x, 0, 1, panel.height}, COL_PANEL_EDGE)
+	rl.DrawRectangleRec({panel.x, panel.y - 14, panel.width, 14}, fade(COL_INK, 0.56))
+	draw_panel(panel, rl.Color{14, 15, 17, 244}, fade(COL_PANEL_EDGE, 0.9))
+	rl.DrawRectangleRec({panel.x, panel.y, panel.width, 3}, fade(COL_KEY, 0.52))
 
+	draw_dialogue_sidebar(g, dialogue_sidebar_rect())
 	inner_x := panel.x + DIALOGUE_PAD
 	inner_w := panel.width - DIALOGUE_PAD * 2
+	draw_text(g.font_small, "CASE FILE  01 / SERVER ROOM B", {inner_x, panel.y + 18}, 14, fade(COL_KEY, 0.88), 1.5)
+	draw_text(g.font_small, clock_text(g), {panel.x + panel.width - DIALOGUE_PAD - 42, panel.y + 18}, 14, fade(COL_NARRATION, 0.74), 1.2)
+	draw_hline(inner_x, panel.y + 42, inner_w, fade(COL_PANEL_EDGE, 0.8))
 
 	// Options are measured first so the log knows how much room it has left.
 	opt_h := dialogue_options_height(g, inner_w)
-	log_bottom := panel.height - opt_h - DIALOGUE_PAD
-	log_top := DIALOGUE_PAD
+	log_bottom := panel.y + panel.height - opt_h - DIALOGUE_PAD
+	log_top := panel.y + 60
 
 	rl.BeginScissorMode(
 		i32(panel.x),
@@ -68,6 +78,79 @@ draw_dialogue :: proc(g: ^Game) {
 	if d.pending.active {
 		draw_check_popup(g)
 	}
+}
+
+draw_dialogue_sidebar :: proc(g: ^Game, panel: rl.Rectangle) {
+	// This is a dossier, not a decorative portrait: its visual state changes
+	// with the speaker and it keeps the active relationship on-screen.
+	draw_panel(panel, fade(COL_INK, 0.94), fade(COL_FILL, 0.62))
+	rl.DrawRectangleRec({panel.x, panel.y, panel.width, 4}, fade(COL_KEY, 0.8))
+	frame := rl.Rectangle{panel.x + 14, panel.y + 14, panel.width - 28, panel.height * 0.66}
+	draw_panel(frame, fade(COL_INK, 0.95), fade(COL_FILL, 0.56))
+	use_sysadmin := dialogue_last_speaker(g) == "The Sysadmin" && g.sysadmin_portrait_loaded
+	tex := g.detective_portrait
+	loaded := g.detective_portrait_loaded
+	name := "THE DETECTIVE"
+	role := "UNKNOWN NAME"
+	if dialogue_subject_is_priya(g) && g.priya_portrait_loaded {
+		tex = g.priya_portrait
+		loaded = true
+		name = "PRIYA RAGHUNATHAN"
+		role = "CONTESTANT / ASLEEP"
+	}
+	if use_sysadmin {
+		tex = g.sysadmin_portrait
+		loaded = true
+		name = "ANIKA DESHMUKH"
+		role = "SYSTEMS ADMINISTRATOR"
+	}
+	if loaded {
+		src := rl.Rectangle{0, 0, f32(tex.width), f32(tex.height)}
+		rl.DrawTexturePro(tex, src, frame, {0, 0}, 0, rl.WHITE)
+	}
+
+	base_y := frame.y + frame.height + 24
+	draw_text(g.font_small, "ACTIVE DOSSIER", {panel.x + 18, base_y}, 13, fade(COL_KEY, 0.88), 1.6)
+	base_y += 27
+	draw_text(g.font_title, name, {panel.x + 18, base_y}, 24, COL_PAPER, 1.0)
+	base_y += 30
+	draw_text(g.font_small, role, {panel.x + 18, base_y}, 14, fade(COL_KEY, 0.86), 1.0)
+	base_y += 30
+	draw_hline(panel.x + 18, base_y, panel.width - 36, fade(COL_PANEL_EDGE, 0.9))
+	base_y += 18
+	voice := dialogue_last_voice(g)
+	if voice != "" {
+		draw_text(g.font_small, "INTERNAL CHORUS", {panel.x + 18, base_y}, 13, fade(COL_NARRATION, 0.80), 1.3)
+		base_y += 22
+		draw_text(g.font_title, voice, {panel.x + 18, base_y}, 18, speaker_color(voice), 0.8)
+	} else {
+		draw_text(g.font_small, "STATUS: THE ROOM IS LISTENING", {panel.x + 18, base_y}, 13, fade(COL_NARRATION, 0.72), 1.0)
+	}
+}
+
+dialogue_last_speaker :: proc(g: ^Game) -> string {
+	for i := len(g.dialogue.log) - 1; i >= 0; i -= 1 {
+		entry := g.dialogue.log[i]
+		if entry.speaker != "" && entry.speaker != "Narrator" {
+			return entry.speaker
+		}
+	}
+	return ""
+}
+
+dialogue_last_voice :: proc(g: ^Game) -> string {
+	for i := len(g.dialogue.log) - 1; i >= 0; i -= 1 {
+		entry := g.dialogue.log[i]
+		if entry.kind == .Voice {
+			return entry.speaker
+		}
+	}
+	return ""
+}
+
+dialogue_subject_is_priya :: proc(g: ^Game) -> bool {
+	id := g.dialogue.node_id
+	return (len(id) >= 4 && id[:4] == "body") || (len(id) >= 3 && id[:3] == "her")
 }
 
 draw_dialogue_log :: proc(g: ^Game, x, w, top, bottom: f32) {

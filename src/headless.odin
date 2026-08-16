@@ -52,6 +52,9 @@ run_headless_tests :: proc(content_dir: string) -> int {
 	fmt.println("\ncontent")
 	test_content(&t, content_dir)
 
+	fmt.println("\ncritical path")
+	test_critical_path(&t, content_dir)
+
 	fmt.printfln("\n%d passed, %d failed", t.passed, t.failed)
 	return t.failed == 0 ? 0 : 1
 }
@@ -272,6 +275,119 @@ test_content :: proc(t: ^Test_Ctx, content_dir: string) {
 		walk_all_paths(g, entry, &visited, 0)
 	}
 	check(t, len(visited) > 0, fmt.tprintf("graph walk reached %d node(s)", len(visited)))
+}
+
+// The graph walk proves every node is reachable in principle. This proves the
+// case is actually completable: that the flags the evidence sets really do open
+// the accusation, and that the red check is wired to the evidence you gathered.
+@(private = "file")
+test_critical_path :: proc(t: ^Test_Ctx, content_dir: string) {
+	g := new(Game)
+	g.content_dir = content_dir
+	g.headless = true
+	game_init_state(g)
+	game_load_content(g)
+	build_server_room(&g.scene)
+	g.dialogue.script = &g.script
+
+	// With no evidence, the accusation must not be on the table.
+	g.dialogue.node_id = "sysadmin_hub"
+	dialogue_rebuild_options(g)
+	has_accuse := false
+	for ro in g.dialogue.options {
+		if ro.index >= 0 {
+			node := g.script.nodes["sysadmin_hub"]
+			if node.options[ro.index].target_node == "finale_open" {
+				has_accuse = true
+			}
+		}
+	}
+	check(t, !has_accuse, "the accusation is hidden before you have the evidence")
+
+	// Now grant the flags the evidence chain actually sets, and it must open.
+	flag_set(g, "knows_arjun", true)
+	dialogue_rebuild_options(g)
+	has_accuse = false
+	for ro in g.dialogue.options {
+		node := g.script.nodes["sysadmin_hub"]
+		if node.options[ro.index].target_node == "finale_open" {
+			has_accuse = true
+		}
+	}
+	check(t, has_accuse, "the accusation opens once you know who did it")
+
+	// The climax must be a red check, and its modifiers must be fed by the
+	// evidence flags rather than being a flat difficulty.
+	finale := g.script.nodes["finale_case"]
+	red_check_found := false
+	mod_count := 0
+	for opt in finale.options {
+		if opt.kind == .Check && opt.check_kind == .Red {
+			red_check_found = true
+			mod_count = len(opt.authored_mods)
+		}
+	}
+	check(t, red_check_found, "the finale is a red check - one attempt only")
+	check(t, mod_count >= 5, fmt.tprintf("the red check reads %d pieces of evidence", mod_count))
+
+	// Gathering evidence has to measurably improve the odds, or the whole
+	// investigation is decorative.
+	for opt in finale.options {
+		if opt.kind != .Check || opt.check_kind != .Red {
+			continue
+		}
+		bare := build_modifiers(g, opt.skill, opt.authored_mods, context.temp_allocator)
+		odds_bare := check_odds(opt.check_target, sum_modifiers(bare))
+
+		for m in opt.authored_mods {
+			flag_set(g, m.flag, true)
+		}
+		full := build_modifiers(g, opt.skill, opt.authored_mods, context.temp_allocator)
+		odds_full := check_odds(opt.check_target, sum_modifiers(full))
+
+		check(
+			t,
+			odds_full > odds_bare,
+			fmt.tprintf(
+				"evidence moves the finale from %.0f%% to %.0f%%",
+				odds_bare * 100,
+				odds_full * 100,
+			),
+		)
+	}
+
+	// Both branches of the climax have to lead somewhere authored. A red check
+	// you can fail must not be a dead end.
+	for opt in finale.options {
+		if opt.kind != .Check {
+			continue
+		}
+		_, pass_ok := g.script.nodes[opt.pass_node]
+		_, fail_ok := g.script.nodes[opt.fail_node]
+		check(t, pass_ok && fail_ok, "failing the finale is authored, not a dead end")
+	}
+
+	// And the ending must actually end.
+	ending, ending_ok := g.script.nodes["finale_end"]
+	check(t, ending_ok && ending.ends, "'finale_end' terminates the scene")
+
+	// Hot reload must not cost the player their run. Put a thought partway
+	// through research, reload the content, and it has to survive.
+	cabinet_start_research(&g.cabinet, "harmonic_greed")
+	th := cabinet_find(&g.cabinet, "harmonic_greed")
+	th.beats_done = 3
+	flag_set(g, "reload_canary", true)
+
+	game_load_content(g)
+
+	after := cabinet_find(&g.cabinet, "harmonic_greed")
+	check(
+		t,
+		after != nil && after.state == .Researching && after.beats_done == 3,
+		"hot reload keeps a thought's research progress",
+	)
+	check(t, flag_is_set(g, "reload_canary"), "hot reload keeps world flags")
+	check(t, len(g.load_errors) == 0, "content still parses clean on reload")
 }
 
 // Depth-limited exhaustive walk. Cycles are fine -- we only need each node

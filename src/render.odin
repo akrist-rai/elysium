@@ -114,6 +114,46 @@ draw_floor :: proc(g: ^Game) {
 	}
 }
 
+// Marks on the floor make the server room feel used: cable runs, a torn note,
+// and thin pools of monitor light. They are deliberately painted before props
+// so furniture can occlude them naturally.
+draw_room_details :: proc(g: ^Game) {
+	cam := g.camera
+	cable := fade(rl.Color{28, 31, 34, 255}, 0.88)
+	cables := [][4]f32{
+		{2.0, 11.7, 7.8, 10.4},
+		{7.8, 10.4, 10.8, 12.8},
+		{10.8, 12.8, 14.7, 10.1},
+		{12.8, 5.1, 9.2, 7.8},
+	}
+	for c in cables {
+		a := world_to_screen(cam, c[0], c[1], 0.012)
+		b := world_to_screen(cam, c[2], c[3], 0.012)
+		rl.DrawLineEx(a, b, 2.1 * cam.zoom, cable)
+		rl.DrawLineEx(a, b, 0.65 * cam.zoom, fade(COL_FILL, 0.22))
+	}
+
+	// Cold monitor reflection, breathing just enough to prevent the room from
+	// feeling like a still map.
+	pulse := 0.30 + math.sin(g.time * 1.8) * 0.08
+	reflections := [3]rl.Vector2{{4.6, 8.9}, {12.6, 5.2}, {2.4, 6.9}}
+	for pos in reflections {
+		p := world_to_screen(cam, pos.x, pos.y, 0.01)
+		rl.DrawEllipse(i32(p.x), i32(p.y), 34 * cam.zoom, 11 * cam.zoom, fade(COL_FILL, pulse))
+	}
+
+	// Dust catches the fluorescent tube; use a deterministic pattern rather
+	// than random calls so it looks composed and costs nothing.
+	for i := 0; i < 18; i += 1 {
+		x := 2.0 + f32((i * 37) % 143) / 10.0
+		y := 1.0 + math.mod(f32(i*19), 112) / 10.0
+		z := 0.2 + math.mod(g.time * (0.12 + f32(i%3)*0.03) + f32(i)*0.17, 1.8)
+		p := world_to_screen(cam, x, y, z)
+		r := (0.7 + f32(i%3)*0.26) * cam.zoom
+		rl.DrawCircleV(p, r, fade(COL_PAPER, 0.10))
+	}
+}
+
 // A soft contact shadow so props and people sit on the floor instead of
 // floating above it.
 draw_ground_shadow :: proc(cam: Iso_Camera, at: rl.Vector2, radius: f32, strength: f32) {
@@ -174,12 +214,25 @@ draw_player :: proc(g: ^Game) {
 	)
 }
 
+draw_topdown_player :: proc(g: ^Game) {
+	p := g.player_ent
+	base := topdown_world_to_screen(g, p.pos)
+	scale := f32(rl.GetScreenHeight()) / 900.0
+	bob := math.sin(p.bob * 2) * scale
+	// A true top-down figure: head, shoulders and coat read from above rather
+	// than as a small front-facing cutout dropped onto the floor.
+	rl.DrawEllipse(i32(base.x), i32(base.y + 10*scale), 16*scale, 7*scale, fade(COL_INK, 0.74))
+	rl.DrawEllipse(i32(base.x), i32(base.y + bob), 12*scale, 20*scale, rl.Color{31, 37, 43, 255})
+	rl.DrawEllipse(i32(base.x), i32(base.y - 10*scale + bob), 8*scale, 8*scale, rl.Color{170, 137, 104, 255})
+	rl.DrawCircleV({base.x + 3*scale, base.y - 12*scale + bob}, 3*scale, fade(COL_KEY, 0.65))
+}
+
 // Orbs pulse. Ones you have already exhausted go grey, so a room you have
 // worked through looks worked through.
 draw_orb :: proc(g: ^Game, idx: int) {
 	it := g.scene.interactables[idx]
 	cam := g.camera
-	sp := world_to_screen(cam, it.pos.x, it.pos.y, it.height)
+	sp := interactable_screen_pos(g, it)
 
 	pulse := 1.0 + math.sin(g.orb_phase * 2.2 + f32(idx) * 1.7) * 0.14
 	hovered := g.hovered_interactable == idx
@@ -200,13 +253,13 @@ draw_orb :: proc(g: ^Game, idx: int) {
 
 	// A thin tether down to the thing it belongs to, so it is never ambiguous
 	// what the orb is pointing at.
-	ground := world_to_screen(cam, it.pos.x, it.pos.y, 0)
+	ground := g.world_art_loaded ? topdown_world_to_screen(g, it.pos) : world_to_screen(cam, it.pos.x, it.pos.y, 0)
 	rl.DrawLineEx(sp, ground, 1, fade(base_col, 0.22))
 }
 
 draw_orb_label :: proc(g: ^Game, idx: int) {
 	it := g.scene.interactables[idx]
-	sp := world_to_screen(g.camera, it.pos.x, it.pos.y, it.height)
+	sp := interactable_screen_pos(g, it)
 	label := label_or_id(it)
 
 	size := f32(17)
@@ -224,7 +277,7 @@ draw_click_marker :: proc(g: ^Game) {
 		return
 	}
 	t := 1.0 - (g.click_marker_life / 0.5)
-	c := world_to_screen(g.camera, g.click_marker.x, g.click_marker.y, 0)
+	c := g.world_art_loaded ? topdown_world_to_screen(g, g.click_marker) : world_to_screen(g.camera, g.click_marker.x, g.click_marker.y, 0)
 	r := 6 + t * 22
 	rl.DrawEllipseLines(
 		i32(c.x),
@@ -241,9 +294,9 @@ draw_path :: proc(g: ^Game) {
 	if p.path == nil || p.path_idx >= len(p.path) {
 		return
 	}
-	prev := world_to_screen(g.camera, p.pos.x, p.pos.y, 0)
+	prev := g.world_art_loaded ? topdown_world_to_screen(g, p.pos) : world_to_screen(g.camera, p.pos.x, p.pos.y, 0)
 	for i in p.path_idx ..< len(p.path) {
-		pt := world_to_screen(g.camera, p.path[i].x, p.path[i].y, 0)
+		pt := g.world_art_loaded ? topdown_world_to_screen(g, p.path[i]) : world_to_screen(g.camera, p.path[i].x, p.path[i].y, 0)
 		rl.DrawLineEx(prev, pt, 1.5, fade(COL_PAPER, 0.16))
 		prev = pt
 	}
@@ -252,8 +305,27 @@ draw_path :: proc(g: ^Game) {
 
 render_world :: proc(g: ^Game) {
 	rl.ClearBackground(rl.Color{16, 17, 19, 255})
+	if g.world_art_loaded {
+		sw := f32(rl.GetScreenWidth())
+		sh := f32(rl.GetScreenHeight())
+		src := rl.Rectangle{0, 0, f32(g.world_art.width), f32(g.world_art.height)}
+		rl.DrawTexturePro(g.world_art, src, {0, 0, sw, sh}, {0, 0}, 0, rl.WHITE)
+		draw_path(g)
+		draw_click_marker(g)
+		draw_topdown_player(g)
+		for it, i in g.scene.interactables {
+			if interactable_visible(g, it) {
+				draw_orb(g, i)
+			}
+		}
+		if g.hovered_interactable >= 0 {
+			draw_orb_label(g, g.hovered_interactable)
+		}
+		return
+	}
 
 	draw_floor(g)
+	draw_room_details(g)
 	draw_path(g)
 	draw_click_marker(g)
 
@@ -338,4 +410,17 @@ draw_emissive_face :: proc(cam: Iso_Camera, p: Prop) {
 	inner_c := rl.Vector2{c.x - (c.x-d.x)*0.12, c.y - (c.y-b.y)*0.16}
 	inner_d := rl.Vector2{d.x + (c.x-d.x)*0.12, d.y - (d.y-a.y)*0.16}
 	draw_quad(inner_a, inner_b, inner_c, inner_d, fade(rl.Color{210, 250, 236, 255}, 0.85 * p.emissive))
+
+	// Server faces need more than one bright rectangle. Tiny status rows turn a
+	// block into a machine, and the alternating intensity makes the rack row
+	// feel alive under the bloom pass.
+	for i := 1; i < 5; i += 1 {
+		t := f32(i) / 5.0
+		la := rl.Vector2{a.x + (d.x-a.x)*t + 4, a.y + (d.y-a.y)*t}
+		lb := rl.Vector2{b.x + (c.x-b.x)*t - 4, b.y + (c.y-b.y)*t}
+		rl.DrawLineEx(la, lb, 1, fade(COL_INK, 0.65))
+		if i % 2 == 0 {
+			rl.DrawCircleV(rl.Vector2{lb.x - 7, lb.y}, 1.6, fade(COL_PASS, 0.85 * p.emissive))
+		}
+	}
 }

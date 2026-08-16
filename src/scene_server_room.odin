@@ -17,8 +17,8 @@ build_server_room :: proc(s: ^Scene) {
 	s.spawn = {7.5, 9.5}
 	s.opening_node = "wake"
 
-	wall_top := rl.Color{78, 76, 70, 255}
-	wall_side := rl.Color{66, 64, 60, 255}
+	wall_top := rl.Color{102, 99, 92, 255}
+	wall_side := rl.Color{88, 85, 80, 255}
 
 	// --- shell --------------------------------------------------------------
 	// The two far walls (north and west) are full height and act as the
@@ -187,39 +187,39 @@ build_server_room :: proc(s: ^Scene) {
 	// --- interactables ------------------------------------------------------
 	scene_add_interactable(s, Interactable{
 		id = "body", label = "The contestant", node = "the_body",
-		pos = {4.0, 7.8}, height = 1.5, stand = {4.0, 9.2}, is_person = true,
+		pos = {4.0, 7.8}, height = 1.5, stand = {4.0, 9.2}, is_person = true, topdown_pos = {360, 625},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "monitor", label = "Her monitor", node = "her_monitor",
-		pos = {4.8, 6.7}, height = 1.25, stand = {5.2, 8.6},
+		pos = {4.8, 6.7}, height = 1.25, stand = {5.2, 8.6}, topdown_pos = {350, 555},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "scoreboard", label = "The frozen scoreboard", node = "scoreboard",
-		pos = {1.4, 5.6}, height = 2.5, stand = {2.6, 5.6},
+		pos = {1.4, 5.6}, height = 2.5, stand = {2.6, 5.6}, topdown_pos = {150, 250},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "racks", label = "The rack row", node = "the_racks",
-		pos = {11.5, 3.4}, height = 2.9, stand = {11.5, 4.8},
+		pos = {11.5, 3.4}, height = 2.9, stand = {11.5, 4.8}, topdown_pos = {890, 180},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "whiteboard", label = "The whiteboard", node = "whiteboard",
-		pos = {4.8, 1.4}, height = 2.5, stand = {4.8, 3.0},
+		pos = {4.8, 1.4}, height = 2.5, stand = {4.8, 3.0}, topdown_pos = {150, 520},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "firedoor", label = "The fire door", node = "fire_door",
-		pos = {16.6, 11.1}, height = 2.9, stand = {15.4, 11.1},
+		pos = {16.6, 11.1}, height = 2.9, stand = {15.4, 11.1}, topdown_pos = {1450, 460},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "cup", label = "A coffee cup", node = "coffee_cup",
-		pos = {12.3, 9.0}, height = 1.15, stand = {12.3, 10.4},
+		pos = {12.3, 9.0}, height = 1.15, stand = {12.3, 10.4}, topdown_pos = {1190, 740},
 	})
 	scene_add_interactable(s, Interactable{
 		id = "sysadmin", label = "The sysadmin", node = "sysadmin_hub",
-		pos = {13.4, 6.2}, height = 1.85, stand = {12.6, 6.6}, is_person = true,
+		pos = {13.4, 6.2}, height = 1.85, stand = {12.6, 6.6}, is_person = true, topdown_pos = {1110, 300},
 		require = "sysadmin_present",
 	})
 	scene_add_interactable(s, Interactable{
 		id = "self", label = "Yourself", node = "yourself",
-		pos = {8.2, 11.6}, height = 1.2, stand = {7.4, 11.6},
+		pos = {8.2, 11.6}, height = 1.2, stand = {7.4, 11.6}, topdown_pos = {760, 720},
 	})
 }

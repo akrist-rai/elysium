@@ -10,26 +10,29 @@ import rl "vendor:raylib"
 sheet_rect :: proc() -> rl.Rectangle {
 	sw := f32(rl.GetScreenWidth())
 	sh := f32(rl.GetScreenHeight())
-	w := math.min(f32(1080), sw - 120)
-	h := math.min(f32(760), sh - 100)
+	w := math.min(f32(1380), sw - 84)
+	h := math.min(f32(810), sh - 72)
 	return {(sw - w) * 0.5, (sh - h) * 0.5, w, h}
 }
 
 draw_sheet :: proc(g: ^Game) {
 	sw := f32(rl.GetScreenWidth())
 	sh := f32(rl.GetScreenHeight())
-	rl.DrawRectangleRec({0, 0, sw, sh}, fade(rl.BLACK, 0.72))
+	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_INK, 0.78))
 
 	rect := sheet_rect()
-	draw_panel(rect, rl.Color{17, 18, 21, 252}, COL_PANEL_EDGE)
+	draw_panel(rect, rl.Color{17, 18, 21, 252}, fade(COL_KEY, 0.52))
+	rl.DrawRectangleRec({rect.x, rect.y, 5, rect.height}, fade(COL_KEY, 0.86))
 
 	pad := f32(32)
 	x := rect.x + pad
 	y := rect.y + pad
 	w := rect.width - pad * 2
 
-	draw_sheet_tabs(g, x, y, w)
-	y += 46
+	draw_text(g.font_small, "PERSONAL CASE FILE", {x, y}, 13, fade(COL_KEY, 0.90), 1.7)
+	draw_text(g.font_title, sheet_title(g.sheet_tab), {x, y + 20}, 28, COL_PAPER, 0.9)
+	draw_sheet_tabs(g, x + 330, y + 17, w - 330)
+	y += 62
 	draw_hline(x, y, w, fade(COL_PANEL_EDGE, 0.9))
 	y += 22
 
@@ -47,7 +50,7 @@ draw_sheet :: proc(g: ^Game) {
 	}
 	rl.EndScissorMode()
 
-	hint := "[tab] switch  [esc] close"
+	hint := "[tab] next dossier    [esc] return to room"
 	m := measure(g.font_small, hint, 14)
 	draw_text(
 		g.font_small,
@@ -56,6 +59,16 @@ draw_sheet :: proc(g: ^Game) {
 		14,
 		COL_LOCKED,
 	)
+}
+
+sheet_title :: proc(tab: Sheet_Tab) -> string {
+	switch tab {
+	case .Skills: return "THE INNER CHORUS"
+	case .Thoughts: return "THOUGHT CABINET"
+	case .Journal: return "ACTIVE CASEWORK"
+	case .Inventory: return "POCKETS & EVIDENCE"
+	}
+	return "CASE FILE"
 }
 
 draw_sheet_tabs :: proc(g: ^Game, x, y, w: f32) {
@@ -84,7 +97,7 @@ draw_sheet_tabs :: proc(g: ^Game, x, y, w: f32) {
 
 		draw_text(g.font_small, name, {tx, y}, 15, col, 1.8)
 		if active {
-			rl.DrawRectangleRec({tx, y + 22, m.x, 2}, COL_PAPER)
+			rl.DrawRectangleRec({tx - 4, y + 22, m.x + 8, 2}, COL_KEY)
 		}
 		tx += m.x + 40
 	}
