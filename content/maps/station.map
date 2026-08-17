@@ -1,0 +1,45 @@
+; Voskresenskaya Station -- prologue floor plan.
+;
+; A pylon station: two platform halls, a row of pylons down each
+; side pierced by archways, and one central hall between them. West
+; is the ticket hall and the street shutter. East is the rose window.
+;
+;   #  wall          M  marble concourse   p  platform
+;   !  tactile edge strip                  T  running road
+;   C  the stopped 04:41                   O  pylon
+;   t  turnstile     X  gap in the turnstile line (shut)
+;   G  stained glass H  street shutter     E  escalator
+;   K  kiosk         V  vending machine    b  bench
+;   s  service door  ,  maintenance corridor
+;   *  ceiling light @  player spawn
+;
+####################################################################################
+########################GG######GG######GG######GG######GG######GG######GG##########
+####################TTTTTTTTTTTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTTTTTTTTTT#######
+####################TTTTTTTTTTTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTTTTTTTTTT#######
+####################!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!#######
+####################ppppppppppppppppppppppppppppppppppppppppppppppppppppppppp,,,,,,#
+####################ppppp*bbppppppp*ppbbppppp*ppppbbppp*ppppppbbp*ppppppppp*s,,,,,,#
+####################ppppppppppppppppppppppppppppppppppppppppppppppppppppppppp,,,,,,#
+####################OOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOO#######
+#MMMMMMMMMMMMMMMMMttMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#######
+#MMMKKMMMMMMMMMMMMttMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#######
+#MMMMMMMM*MMMMMMMMXXMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMG######
+#MEEEEEMMMMMMMMMMMttMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMG######
+HMEEEEEMMMMMMMMMMMttMMMMMMMMMMVMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMG######
+HMEEEEEMMMMMMMMMMMXXMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMG######
+HMEEEEEMM*MMMMMMMMttMMMMMMMMMMMMMM@MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMG######
+HMEEEEEMMMMMMMMMMMttMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMKMMMMMMMMMMMMMMMMMMMMMMG######
+#MEEEEEMMMMMMMMMMMXXMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMG######
+#MMMMMMMMMMMMMMMMMttMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMMMMMM*MMG######
+#MMVMMMMM*MMVMMMMMttMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#######
+#MMMMMMMMMMMMMMMMMttMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#######
+####################OOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOMMOOOOO#######
+####################ppppppppppppppppppppppppppppppppppppppppppppppppppppppppp#######
+####################ppppp*bbppppppp*ppbbppppp*ppppbbppp*ppppppbbp*ppppppppp*p#######
+####################ppppppppppppppppppppppppppppppppppppppppppppppppppppppppp#######
+####################!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!#######
+####################TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT#######
+####################TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT#######
+########################GG######GG######GG######GG######GG######GG######GG##########
+####################################################################################

@@ -55,6 +55,9 @@ run_headless_tests :: proc(content_dir: string) -> int {
 	fmt.println("\ncritical path")
 	test_critical_path(&t, content_dir)
 
+	fmt.println("\nfloor plan")
+	test_floor_plan(&t, content_dir)
+
 	fmt.printfln("\n%d passed, %d failed", t.passed, t.failed)
 	return t.failed == 0 ? 0 : 1
 }
@@ -238,10 +241,6 @@ test_content :: proc(t: ^Test_Ctx, content_dir: string) {
 	// Orphans are reported but not fatal: an unreferenced node is usually a
 	// scene still being written.
 	roots := []string{"wake"}
-	for &it in g.scene.interactables {
-		_ = it
-	}
-	build_server_room(&g.scene)
 	entry_points := make([dynamic]string, context.temp_allocator)
 	append(&entry_points, ..roots)
 	for &it in g.scene.interactables {
@@ -287,7 +286,6 @@ test_critical_path :: proc(t: ^Test_Ctx, content_dir: string) {
 	g.headless = true
 	game_init_state(g)
 	game_load_content(g)
-	build_server_room(&g.scene)
 	g.dialogue.script = &g.script
 
 	// With no evidence, the accusation must not be on the table.
@@ -388,6 +386,116 @@ test_critical_path :: proc(t: ^Test_Ctx, content_dir: string) {
 	)
 	check(t, flag_is_set(g, "reload_canary"), "hot reload keeps world flags")
 	check(t, len(g.load_errors) == 0, "content still parses clean on reload")
+}
+
+// The floor plan is content, so it gets the same treatment as the writing: it
+// has to parse, and it has to be a room you can actually walk around. A case
+// where the evidence is behind a wall is as broken as one where the dialogue
+// jumps to a node that does not exist.
+@(private = "file")
+test_floor_plan :: proc(t: ^Test_Ctx, content_dir: string) {
+	g := new(Game)
+	g.content_dir = content_dir
+	g.headless = true
+	game_init_state(g)
+	game_load_content(g)
+
+	check(t, g.scene.built, "content/map.txt parses and builds a scene")
+	if !g.scene.built {
+		return
+	}
+
+	m := &g.scene.grid
+	check(t, m.w >= 20 && m.h >= 20, fmt.tprintf("floor plan is %dx%d tiles", m.w, m.h))
+	check(
+		t,
+		!tile_blocks(tilemap_at(m, int(g.scene.spawn.x), int(g.scene.spawn.y))),
+		"you do not wake up inside a wall",
+	)
+	check(t, len(g.scene.lights) > 0, fmt.tprintf("the room has %d light source(s)", len(g.scene.lights)))
+
+	// Flood fill from where the player wakes up. Anything not in this set is
+	// scenery the player can never touch.
+	reach := make([]bool, m.w * m.h, context.temp_allocator)
+	stack := make([dynamic]int, context.temp_allocator)
+	start := int(g.scene.spawn.y) * m.w + int(g.scene.spawn.x)
+	reach[start] = true
+	append(&stack, start)
+
+	reachable_count := 0
+	neighbours := [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for len(stack) > 0 {
+		cur := pop(&stack)
+		reachable_count += 1
+		cx := cur % m.w
+		cy := cur / m.w
+		for d in neighbours {
+			nx := cx + d[0]
+			ny := cy + d[1]
+			if nx < 0 || ny < 0 || nx >= m.w || ny >= m.h {
+				continue
+			}
+			ni := ny * m.w + nx
+			if reach[ni] || tile_blocks(tilemap_at(m, nx, ny)) {
+				continue
+			}
+			reach[ni] = true
+			append(&stack, ni)
+		}
+	}
+	check(t, reachable_count > 300, fmt.tprintf("%d tiles can be walked to from where you wake", reachable_count))
+
+	// If a doorway is walled off, one of these never gets set.
+	seen_tech, seen_corridor, seen_office := false, false, false
+	for i in 0 ..< len(reach) {
+		if !reach[i] {
+			continue
+		}
+		if m.tiles[i] == .Floor_Tech {
+			seen_tech = true
+		} else if m.tiles[i] == .Floor_Corridor {
+			seen_corridor = true
+		} else if m.tiles[i] == .Floor_Office {
+			seen_office = true
+		}
+	}
+	check(t, seen_tech, "the server room is reachable")
+	check(t, seen_corridor, "the corridor is reachable through its doorway")
+	check(t, seen_office, "the office is reachable through its doorway")
+
+	// And every single thing the case is made of has somewhere to stand.
+	stranded := 0
+	for it in g.scene.interactables {
+		pos := it.pos
+		if it.follow_actor >= 0 && it.follow_actor < len(g.scene.actors) {
+			pos = g.scene.actors[it.follow_actor].pos
+		}
+
+		within := false
+		r := 4 // comfortably past INTERACT_RANGE in whole tiles
+		for dy in -r ..= r {
+			for dx in -r ..= r {
+				tx := int(pos.x) + dx
+				ty := int(pos.y) + dy
+				if tx < 0 || ty < 0 || tx >= m.w || ty >= m.h {
+					continue
+				}
+				if !reach[ty * m.w + tx] {
+					continue
+				}
+				ddx := f32(tx) + 0.5 - pos.x
+				ddy := f32(ty) + 0.5 - pos.y
+				if math.sqrt(ddx * ddx + ddy * ddy) <= INTERACT_RANGE {
+					within = true
+				}
+			}
+		}
+		if !within {
+			fmt.printfln("  FAIL  nowhere to stand next to '%s'", it.id)
+			stranded += 1
+		}
+	}
+	check(t, stranded == 0, "every interactable can be walked up to and reached")
 }
 
 // Depth-limited exhaustive walk. Cycles are fine -- we only need each node

@@ -1,0 +1,174 @@
+# ---------------------------------------------------------------------------
+# Voskresenskaya Station -- the prologue. Thoughts, the toolkit, and the four
+# ways out.
+#
+# The toolkit is deliberately real. Every tool in here does in the fiction what
+# it does on a real engagement, including the parts that are inconvenient: Burp
+# cannot read TLS until its CA is trusted, a capture is worthless without a
+# span port or a hub, and a cloned card is a copy of somebody's actual day.
+# ---------------------------------------------------------------------------
+
+# ===========================================================================
+# THOUGHTS
+# ===========================================================================
+
+:: thought the_held_state
+NAME       The Held State
+PREMISE    The station did not crash. Crashing is loud and it is honest and it
+PREMISE    takes everything down with it. This stopped. The lights are on, the
+PREMISE    escalators are turning, the clock is keeping perfect time, and one
+PREMISE    subsystem somewhere is refusing to advance and taking the whole
+PREMISE    building hostage politely.
+CONCLUSION You know the shape of it now. Somebody opened a transaction and
+CONCLUSION never closed it. Every door in this station is waiting on a lock
+CONCLUSION that a process is still holding, and that process is not stuck --
+CONCLUSION it is being held. There is a hand on it. You have started looking
+CONCLUSION for the hand instead of the fault, and you are not going to be able
+CONCLUSION to stop.
+BEATS      6
+RESEARCH   Composure -1
+BONUS      Logic 2
+BONUS      Interfacing 1
+
+:: thought glass_saints
+NAME       The Saints Are A Status Page
+PREMISE    The rose window above the concourse is nine metres of leaded glass
+PREMISE    and it is also the departure board. The figures in the lancets are
+PREMISE    not saints. They are services. When one goes amber, a line is
+PREMISE    degraded. You have been staring up at it like a tourist and reading
+PREMISE    it like an operator and the two are fighting.
+CONCLUSION Somebody built a monitoring dashboard and made it beautiful enough
+CONCLUSION that four hundred thousand people a day look up at it without once
+CONCLUSION realising they are watching infrastructure fail in real time. You
+CONCLUSION find that either the best or the worst thing anyone has ever done
+CONCLUSION with stained glass, and you have stopped trying to decide which.
+BEATS      4
+BONUS      Perception 2
+BONUS      Conceptualization 1
+
+:: thought read_only_hands
+NAME       Read-Only Hands
+PREMISE    You have been in this station eleven minutes and you have already
+PREMISE    put a capture on a network that did not invite you. You keep telling
+PREMISE    yourself that listening is not touching. You have told yourself that
+PREMISE    before, in other buildings, and you remember how those ended.
+CONCLUSION There is no read-only. There is only the part where you have not
+CONCLUSION written yet. Every capture is a decision you are deferring, and
+CONCLUSION tonight you are going to stop deferring it, and the honest thing is
+CONCLUSION to admit you knew that when you opened the bag.
+BEATS      5
+RESEARCH   Volition -1
+BONUS      Interfacing 2
+BONUS      Half Light 1
+
+:: thought layer_two_animal
+NAME       Layer Two Animal
+PREMISE    You have started hearing the station as frames. The turnstiles are
+PREMISE    chattering, the PA is unicast when it should be multicast, and
+PREMISE    something on the maintenance VLAN is ARPing for a gateway that has
+PREMISE    not answered since the doors closed.
+CONCLUSION You do not see rooms any more. You see broadcast domains, and the
+CONCLUSION walls between them are the only walls you actually respect. It has
+CONCLUSION made you very good at this and very bad at being anywhere.
+BEATS      6
+RESEARCH   Empathy -1
+BONUS      Interfacing 2
+BONUS      Perception 1
+BONUS      Shivers 1
+
+# ===========================================================================
+# THE TOOLKIT
+# ===========================================================================
+
+:: item field_laptop
+NAME   The Field Laptop
+DESC   Fourteen inch, matte, every sticker scraped off with a thumbnail so it
+DESC   photographs as nobody's. The lid shuts on a folded antenna it should not
+DESC   have room for. It boots to a login prompt that does not say whose.
+EQUIP  yes
+MOD    Interfacing 2
+MOD    Encyclopedia 1
+MOD    Composure -1
+
+:: item wireshark_capture
+NAME   A Capture You Should Not Have
+DESC   Eleven minutes of the concourse network, timestamped, saved to disk
+DESC   because you could not help yourself. Nine thousand frames. Somewhere in
+DESC   there is the moment the station stopped, and it is going to be one
+DESC   packet, and it is going to be small.
+EQUIP  yes
+MOD    Logic 1
+MOD    Perception 1
+
+:: item burp_ca
+NAME   Your Own Certificate Authority
+DESC   A CA certificate with your name on it, generated this morning, valid
+DESC   until it is not. Nothing you proxy is readable until something at the
+DESC   other end agrees to trust it. Getting things to trust it is most of the
+DESC   job and all of the crime.
+EQUIP  yes
+MOD    Interfacing 1
+MOD    Suggestion 1
+
+:: item proxmark
+NAME   The Card Reader That Reads Backwards
+DESC   A Proxmark in a sunglasses case, coil taped where the hinge was. Hold it
+DESC   near a transit card for four seconds and it comes away knowing enough to
+DESC   be that card. It is the least deniable object you own.
+EQUIP  yes
+MOD    Hand Eye Coordination 1
+MOD    Interfacing 1
+MOD    Authority -1
+
+:: item cloned_card
+NAME   Somebody Else's Wednesday
+DESC   A blank fob carrying a maintenance credential that belongs to a man who
+DESC   is at this moment eating a sandwich on the westbound platform. It opens
+DESC   the doors he is allowed through. It will be his name in the log, not
+DESC   yours, and you have decided to think about that later.
+EQUIP  no
+
+:: item ducky
+NAME   A USB Stick That Types
+DESC   Grey, unbranded, deliberately boring. It is not storage. Plugged into
+DESC   anything with a keyboard driver it introduces itself as a keyboard and
+DESC   starts typing at nine hundred words a minute, and it does not care who
+DESC   is watching the screen while it does.
+EQUIP  yes
+MOD    Hand Eye Coordination 1
+MOD    Half Light 1
+
+:: item gate_token
+NAME   A Fare Token, Replayed
+DESC   Forty-one bytes lifted off the turnstile handshake and written back down
+DESC   unchanged. The gate has no way to know it has seen this before, which is
+DESC   not a clever attack, it is an old one, and it is still here.
+EQUIP  no
+
+:: item attendant_lanyard
+NAME   Nikolai's Lanyard
+DESC   Station staff, westbound, twenty-two years on the network. He put it on
+DESC   the counter to rub his eyes and did not put it back on. The photograph
+DESC   is from before the beard.
+EQUIP  yes
+MOD    Authority 1
+
+# ===========================================================================
+# TASKS
+# ===========================================================================
+
+:: task get_out
+TITLE  Get out of Voskresenskaya
+DETAIL Every gate, shutter and service door in the station went closed at 02:14
+DETAIL and stayed closed. You are inside a building that has decided nobody is
+DETAIL leaving, and nobody has come to tell you why.
+
+:: task why_it_sealed
+TITLE  Find out what is holding the doors
+DETAIL Nothing here has failed. The lights are on and the clock is right. Find
+DETAIL the one process that stopped and would not let go.
+
+:: task make_a_way
+TITLE  Open something
+DETAIL There are four ways out of this concourse and each of them wants a
+DETAIL different thing from you. Pick one and be the person who can do it.

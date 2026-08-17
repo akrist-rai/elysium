@@ -4,23 +4,12 @@ import "core:math"
 import "core:slice"
 import rl "vendor:raylib"
 
-// Everything in the world is drawn back-to-front by depth key. Isometric has no
-// depth buffer to lean on, so ordering is the whole trick.
-Draw_Kind :: enum u8 {
-	Prop,
-	Player,
-	Orb,
-}
+// Top-down, drawn in three passes: the floor, then everything standing on it
+// sorted by how far down the screen its base sits, then a light map multiplied
+// over the whole thing. Nothing here is a photograph of a room — it is the room,
+// and it keeps going past the edges of the screen.
 
-Draw_Item :: struct {
-	depth: f32,
-	kind:  Draw_Kind,
-	index: int,
-}
-
-// Winding for raylib's culled 2D triangles. Flipping this one constant flips
-// every polygon in the game, which is the only knob needed if culling ever
-// disagrees with us.
+// Winding for raylib's culled 2D triangles.
 TRI_CCW_SIGN :: f32(-1)
 
 draw_tri :: proc(a, b, c: rl.Vector2, col: rl.Color) {
@@ -37,328 +26,588 @@ draw_quad :: proc(a, b, c, d: rl.Vector2, col: rl.Color) {
 	draw_tri(a, c, d, col)
 }
 
-// One box, three visible faces. The two side faces are shaded apart so the
-// form reads without any outline.
-draw_box :: proc(cam: Iso_Camera, pos, size: rl.Vector2, height: f32, top, side: rl.Color) {
-	x0, y0 := pos.x, pos.y
-	x1, y1 := pos.x + size.x, pos.y + size.y
-
-	// Top face
-	t_nw := world_to_screen(cam, x0, y0, height)
-	t_ne := world_to_screen(cam, x1, y0, height)
-	t_se := world_to_screen(cam, x1, y1, height)
-	t_sw := world_to_screen(cam, x0, y1, height)
-
-	// Ground corners of the two faces that point at the viewer
-	g_ne := world_to_screen(cam, x1, y0, 0)
-	g_se := world_to_screen(cam, x1, y1, 0)
-	g_sw := world_to_screen(cam, x0, y1, 0)
-
-	// The +x face catches the warm key from the corridor, the +y face is in
-	// fill light only. That difference is what gives the room its volume.
-	right_face := scale_rgb(side, 0.82)
-	left_face := scale_rgb(side, 0.58)
-
-	if height > 0.001 {
-		draw_quad(t_ne, t_se, g_se, g_ne, right_face)
-		draw_quad(t_sw, t_se, g_se, g_sw, left_face)
-	}
-	draw_quad(t_nw, t_ne, t_se, t_sw, top)
-}
-
-// The floor is drawn as one big diamond with a subtle tile grid scratched into
-// it, rather than thousands of quads.
-draw_floor :: proc(g: ^Game) {
-	s := &g.scene
-	w := f32(s.nav.w)
-	h := f32(s.nav.h)
-	cam := g.camera
-
-	nw := world_to_screen(cam, 0, 0, 0)
-	ne := world_to_screen(cam, w, 0, 0)
-	se := world_to_screen(cam, w, h, 0)
-	sw := world_to_screen(cam, 0, h, 0)
-	draw_quad(nw, ne, se, sw, COL_FLOOR)
-
-	// Grid lines, barely there -- enough to sell the space, not enough to look
-	// like a strategy game.
-	grid := fade(rl.Color{92, 90, 84, 255}, 0.30)
-	for i := 0; i <= s.nav.w; i += 1 {
-		a := world_to_screen(cam, f32(i), 0, 0)
-		b := world_to_screen(cam, f32(i), h, 0)
-		rl.DrawLineEx(a, b, 1, grid)
-	}
-	for j := 0; j <= s.nav.h; j += 1 {
-		a := world_to_screen(cam, 0, f32(j), 0)
-		b := world_to_screen(cam, w, f32(j), 0)
-		rl.DrawLineEx(a, b, 1, grid)
-	}
-
-	// Pooled light on the floor under each source.
-	for l in s.lights {
-		center := world_to_screen(cam, l.pos.x, l.pos.y, 0)
-		steps := 7
-		for k := steps; k >= 1; k -= 1 {
-			t := f32(k) / f32(steps)
-			rx := l.radius * TILE_HW * cam.zoom * t
-			ry := l.radius * TILE_HH * cam.zoom * t
-			alpha := (1.0 - t) * 0.14 * l.intensity
-			rl.DrawEllipse(
-				i32(center.x),
-				i32(center.y),
-				rx,
-				ry,
-				fade(l.color, alpha),
-			)
+// A filled ellipse at an arbitrary angle. Everything with a body in this game is
+// built out of these, so people read as shoulders and coats from above rather
+// than as circles.
+draw_ellipse_rot :: proc(center: rl.Vector2, rx, ry, angle: f32, col: rl.Color, segments: int = 22) {
+	ca := math.cos(angle)
+	sa := math.sin(angle)
+	prev: rl.Vector2
+	for i in 0 ..= segments {
+		t := f32(i) / f32(segments) * math.TAU
+		lx := math.cos(t) * rx
+		ly := math.sin(t) * ry
+		p := rl.Vector2{center.x + lx * ca - ly * sa, center.y + lx * sa + ly * ca}
+		if i > 0 {
+			draw_tri(center, prev, p, col)
 		}
+		prev = p
 	}
 }
 
-// Marks on the floor make the server room feel used: cable runs, a torn note,
-// and thin pools of monitor light. They are deliberately painted before props
-// so furniture can occlude them naturally.
-draw_room_details :: proc(g: ^Game) {
-	cam := g.camera
-	cable := fade(rl.Color{28, 31, 34, 255}, 0.88)
-	cables := [][4]f32{
-		{2.0, 11.7, 7.8, 10.4},
-		{7.8, 10.4, 10.8, 12.8},
-		{10.8, 12.8, 14.7, 10.1},
-		{12.8, 5.1, 9.2, 7.8},
-	}
-	for c in cables {
-		a := world_to_screen(cam, c[0], c[1], 0.012)
-		b := world_to_screen(cam, c[2], c[3], 0.012)
-		rl.DrawLineEx(a, b, 2.1 * cam.zoom, cable)
-		rl.DrawLineEx(a, b, 0.65 * cam.zoom, fade(COL_FILL, 0.22))
-	}
-
-	// Cold monitor reflection, breathing just enough to prevent the room from
-	// feeling like a still map.
-	pulse := 0.30 + math.sin(g.time * 1.8) * 0.08
-	reflections := [3]rl.Vector2{{4.6, 8.9}, {12.6, 5.2}, {2.4, 6.9}}
-	for pos in reflections {
-		p := world_to_screen(cam, pos.x, pos.y, 0.01)
-		rl.DrawEllipse(i32(p.x), i32(p.y), 34 * cam.zoom, 11 * cam.zoom, fade(COL_FILL, pulse))
-	}
-
-	// Dust catches the fluorescent tube; use a deterministic pattern rather
-	// than random calls so it looks composed and costs nothing.
-	for i := 0; i < 18; i += 1 {
-		x := 2.0 + f32((i * 37) % 143) / 10.0
-		y := 1.0 + math.mod(f32(i*19), 112) / 10.0
-		z := 0.2 + math.mod(g.time * (0.12 + f32(i%3)*0.03) + f32(i)*0.17, 1.8)
-		p := world_to_screen(cam, x, y, z)
-		r := (0.7 + f32(i%3)*0.26) * cam.zoom
-		rl.DrawCircleV(p, r, fade(COL_PAPER, 0.10))
-	}
+// Deterministic per-tile noise. The floor has to look worn without looking
+// random every frame, and without an art asset to sample.
+// Unsigned arithmetic wraps at runtime, which is exactly what a bit-mixer
+// wants. (This Odin nightly no longer has the explicit `*%` / `+%` forms.)
+@(private = "file")
+hash2 :: proc(x, y: int) -> u32 {
+	h := u32(x) * 374761393 + u32(y) * 668265263
+	h = (h ~ (h >> 13)) * 1274126177
+	return h ~ (h >> 16)
 }
 
-// A soft contact shadow so props and people sit on the floor instead of
-// floating above it.
-draw_ground_shadow :: proc(cam: Iso_Camera, at: rl.Vector2, radius: f32, strength: f32) {
-	c := world_to_screen(cam, at.x, at.y, 0)
-	steps := 4
-	for k := steps; k >= 1; k -= 1 {
-		t := f32(k) / f32(steps)
-		rl.DrawEllipse(
-			i32(c.x),
-			i32(c.y),
-			radius * TILE_HW * cam.zoom * t,
-			radius * TILE_HH * cam.zoom * t,
-			fade(rl.Color{8, 10, 12, 255}, (1.0 - t) * strength),
-		)
+@(private = "file")
+hashf :: proc(x, y: int) -> f32 {
+	return f32(hash2(x, y) % 2048) / 2048.0
+}
+
+w2s :: proc(g: ^Game, p: rl.Vector2) -> rl.Vector2 {
+	return world_to_screen(g.camera, p)
+}
+
+// World-space rectangle to a screen rectangle. The half-pixel of overdraw keeps
+// neighbouring tiles from showing a seam when the camera lands on a fraction.
+@(private = "file")
+world_rect :: proc(g: ^Game, x, y, w, h: f32) -> rl.Rectangle {
+	tl := w2s(g, {x, y})
+	s := camera_scale(g.camera)
+	return {tl.x, tl.y, w * s + 1, h * s + 1}
+}
+
+// ---------------------------------------------------------------------------
+// Draw list
+// ---------------------------------------------------------------------------
+
+Draw_Kind :: enum u8 {
+	Tile,
+	Actor,
+	Prop,
+}
+
+Draw_Item :: struct {
+	depth: f32,
+	kind:  Draw_Kind,
+	index: int,
+	x, y:  int,
+}
+
+// How far below its own tile a standing thing paints. This is the whole trick
+// of a top-down room: the south face is what turns a coloured square into an
+// object with a height.
+@(private = "file")
+tile_height :: proc(t: Tile) -> f32 {
+	#partial switch t {
+	case .Wall, .Wall_Board, .Wall_Screen, .Wall_Notice, .Wall_Exit:
+		return 0.55
+	case .Rack:
+		return 0.52
+	case .Shelf:
+		return 0.46
+	case .Crate:
+		return 0.32
+	case .Printer:
+		return 0.26
+	case .Desk:
+		return 0.24
+	case .Bench:
+		return 0.21
+	case .Spool:
+		return 0.19
+	case .Chair:
+		return 0.15
 	}
+	return 0
 }
 
-// The detective: a stack of simple forms. Deliberately unheroic -- a coat, a
-// head, and a walk that sways slightly too much.
-draw_player :: proc(g: ^Game) {
-	p := g.player_ent
-	cam := g.camera
+// ---------------------------------------------------------------------------
+// Floor
+// ---------------------------------------------------------------------------
 
-	sway := math.sin(p.bob) * 0.06
-	lift := math.abs(math.sin(p.bob * 2)) * 0.045
-
-	draw_ground_shadow(cam, p.pos, 0.42, 0.55)
-
-	base := world_to_screen(cam, p.pos.x, p.pos.y, 0)
-	z := cam.zoom
-
-	coat_w := 26.0 * z
-	coat_h := 44.0 * z
-	head_r := 9.5 * z
-
-	body_top := base.y - coat_h - lift * TILE_Z * z
-	cx := base.x + sway * TILE_HW * z
-
-	// Coat: a tapered quad, wider at the shoulders.
-	shoulder_l := rl.Vector2{cx - coat_w * 0.5, body_top}
-	shoulder_r := rl.Vector2{cx + coat_w * 0.5, body_top}
-	hem_l := rl.Vector2{cx - coat_w * 0.36, base.y}
-	hem_r := rl.Vector2{cx + coat_w * 0.36, base.y}
-
-	coat := rl.Color{58, 62, 74, 255}
-	draw_quad(shoulder_l, shoulder_r, hem_r, hem_l, coat)
-
-	// Lit edge on the side facing the corridor door.
-	rl.DrawLineEx(shoulder_r, hem_r, 2 * z, rl.Color{132, 128, 118, 255})
-
-	// Head
-	head_c := rl.Vector2{cx, body_top - head_r * 0.85}
-	rl.DrawCircleV(head_c, head_r, rl.Color{176, 148, 122, 255})
-	rl.DrawCircleV(
-		{head_c.x + head_r * 0.28, head_c.y - head_r * 0.2},
-		head_r * 0.72,
-		rl.Color{198, 170, 140, 255},
-	)
-}
-
-draw_topdown_player :: proc(g: ^Game) {
-	p := g.player_ent
-	base := topdown_world_to_screen(g, p.pos)
-	scale := f32(rl.GetScreenHeight()) / 900.0
-	bob := math.sin(p.bob * 2) * scale
-	// A true top-down figure: head, shoulders and coat read from above rather
-	// than as a small front-facing cutout dropped onto the floor.
-	rl.DrawEllipse(i32(base.x), i32(base.y + 10*scale), 16*scale, 7*scale, fade(COL_INK, 0.74))
-	rl.DrawEllipse(i32(base.x), i32(base.y + bob), 12*scale, 20*scale, rl.Color{31, 37, 43, 255})
-	rl.DrawEllipse(i32(base.x), i32(base.y - 10*scale + bob), 8*scale, 8*scale, rl.Color{170, 137, 104, 255})
-	rl.DrawCircleV({base.x + 3*scale, base.y - 12*scale + bob}, 3*scale, fade(COL_KEY, 0.65))
-}
-
-// Orbs pulse. Ones you have already exhausted go grey, so a room you have
-// worked through looks worked through.
-draw_orb :: proc(g: ^Game, idx: int) {
-	it := g.scene.interactables[idx]
-	cam := g.camera
-	sp := interactable_screen_pos(g, it)
-
-	pulse := 1.0 + math.sin(g.orb_phase * 2.2 + f32(idx) * 1.7) * 0.14
-	hovered := g.hovered_interactable == idx
-
-	base_col := it.seen ? COL_ORB_SEEN : COL_ORB
-	r := (it.is_person ? 8.0 : 6.0) * cam.zoom * pulse
-	if hovered {
-		r *= 1.35
+// The albedo of a surface, before any light lands on it. These are much
+// brighter than the final pixel: the light map multiplies over the top.
+@(private = "file")
+floor_base :: proc(t: Tile) -> rl.Color {
+	#partial switch t {
+	case .Floor_Tech:
+		return rl.Color{104, 108, 112, 255} // raised anti-static panels
+	case .Floor_Corridor:
+		return rl.Color{96, 91, 88, 255}
+	case .Floor_Office:
+		return rl.Color{100, 93, 85, 255}
+	case .Door:
+		return rl.Color{86, 82, 78, 255}
 	}
-
-	// Halo
-	for k in 1 ..= 4 {
-		t := f32(k) / 4.0
-		rl.DrawCircleV(sp, r * (1 + t * 2.4), fade(base_col, 0.10 * (1 - t)))
-	}
-	rl.DrawCircleV(sp, r, fade(base_col, hovered ? 1.0 : 0.85))
-	rl.DrawCircleV(sp, r * 0.45, fade(rl.WHITE, hovered ? 0.9 : 0.5))
-
-	// A thin tether down to the thing it belongs to, so it is never ambiguous
-	// what the orb is pointing at.
-	ground := g.world_art_loaded ? topdown_world_to_screen(g, it.pos) : world_to_screen(cam, it.pos.x, it.pos.y, 0)
-	rl.DrawLineEx(sp, ground, 1, fade(base_col, 0.22))
+	return rl.Color{30, 31, 33, 255}
 }
 
-draw_orb_label :: proc(g: ^Game, idx: int) {
-	it := g.scene.interactables[idx]
-	sp := interactable_screen_pos(g, it)
-	label := label_or_id(it)
-
-	size := f32(17)
-	m := measure(g.font, label, size)
-	pad := f32(8)
-	box := rl.Rectangle{sp.x - m.x*0.5 - pad, sp.y - 36, m.x + pad*2, m.y + pad}
-
-	draw_panel(box, fade(COL_INK, 0.92), fade(COL_ORB, 0.5))
-	draw_text(g.font, label, {box.x + pad, box.y + pad*0.45}, size, COL_PAPER)
+// Wear is sampled at the tile's four corners and drawn as a gradient, so
+// neighbouring tiles share their corner values exactly and the variation drifts
+// across the floor instead of stepping at every boundary. A per-tile constant
+// looks subtle on its own, but the painterly pass preserves edges by design --
+// it would keep every one of those steps as a crisp line and turn the floor
+// into graph paper.
+@(private = "file")
+floor_corner :: proc(base: rl.Color, x, y: int) -> rl.Color {
+	return scale_rgb(base, 0.93 + hashf(x, y) * 0.14)
 }
 
-// The click ripple, so ordering a walk feels acknowledged.
-draw_click_marker :: proc(g: ^Game) {
-	if g.click_marker_life <= 0 {
-		return
-	}
-	t := 1.0 - (g.click_marker_life / 0.5)
-	c := g.world_art_loaded ? topdown_world_to_screen(g, g.click_marker) : world_to_screen(g.camera, g.click_marker.x, g.click_marker.y, 0)
-	r := 6 + t * 22
-	rl.DrawEllipseLines(
-		i32(c.x),
-		i32(c.y),
-		r * g.camera.zoom,
-		r * 0.5 * g.camera.zoom,
-		fade(COL_PAPER, (1 - t) * 0.6),
-	)
-}
+@(private = "file")
+draw_floor :: proc(g: ^Game) {
+	x0, y0, x1, y1 := camera_visible_tiles(g.camera)
+	s := camera_scale(g.camera)
+	// Barely-there seams. Strong ones turn the floor into graph paper, which is
+	// the fastest way to make a room read as a grid instead of as a place.
+	seam := fade(rl.Color{18, 19, 21, 255}, 0.22)
 
-// The remaining path, drawn faintly, so long walks are legible.
-draw_path :: proc(g: ^Game) {
-	p := g.player_ent
-	if p.path == nil || p.path_idx >= len(p.path) {
-		return
-	}
-	prev := g.world_art_loaded ? topdown_world_to_screen(g, p.pos) : world_to_screen(g.camera, p.pos.x, p.pos.y, 0)
-	for i in p.path_idx ..< len(p.path) {
-		pt := g.world_art_loaded ? topdown_world_to_screen(g, p.path[i]) : world_to_screen(g.camera, p.path[i].x, p.path[i].y, 0)
-		rl.DrawLineEx(prev, pt, 1.5, fade(COL_PAPER, 0.16))
-		prev = pt
-	}
-	rl.DrawCircleV(prev, 3 * g.camera.zoom, fade(COL_PAPER, 0.3))
-}
+	for y in y0 ..= y1 {
+		for x in x0 ..= x1 {
+			t := tilemap_at(&g.scene.grid, x, y)
+			if !tile_is_floor(t) {
+				continue
+			}
+			r := world_rect(g, f32(x), f32(y), 1, 1)
+			base := floor_base(t)
+			rl.DrawRectangleGradientEx(
+				r,
+				floor_corner(base, x, y),
+				floor_corner(base, x, y + 1),
+				floor_corner(base, x + 1, y + 1),
+				floor_corner(base, x + 1, y),
+			)
 
-render_world :: proc(g: ^Game) {
-	rl.ClearBackground(rl.Color{16, 17, 19, 255})
-	if g.world_art_loaded {
-		sw := f32(rl.GetScreenWidth())
-		sh := f32(rl.GetScreenHeight())
-		src := rl.Rectangle{0, 0, f32(g.world_art.width), f32(g.world_art.height)}
-		rl.DrawTexturePro(g.world_art, src, {0, 0, sw, sh}, {0, 0}, 0, rl.WHITE)
-		draw_path(g)
-		draw_click_marker(g)
-		draw_topdown_player(g)
-		for it, i in g.scene.interactables {
-			if interactable_visible(g, it) {
-				draw_orb(g, i)
+			// Panel seams. Only the tech floor is panelled -- carpet gets
+			// nothing, because anything laid out at one-tile spacing on carpet
+			// reads as a checkerboard rather than as a weave.
+			if t == .Floor_Tech {
+				rl.DrawRectangleRec({r.x, r.y, r.width, math.max(1, s * 0.022)}, seam)
+				rl.DrawRectangleRec({r.x, r.y, math.max(1, s * 0.022), r.height}, seam)
 			}
 		}
-		if g.hovered_interactable >= 0 {
-			draw_orb_label(g, g.hovered_interactable)
+	}
+}
+
+@(private = "file")
+draw_decals :: proc(g: ^Game) {
+	s := camera_scale(g.camera)
+	for d in g.scene.decals {
+		switch d.kind {
+		case .Cable:
+			a := w2s(g, d.a)
+			b := w2s(g, d.b)
+			rl.DrawLineEx(a, b, math.max(1.5, d.size * s), d.tint)
+			// A thin highlight along the top of the run so it reads as round.
+			rl.DrawLineEx(
+				{a.x, a.y - d.size * s * 0.28},
+				{b.x, b.y - d.size * s * 0.28},
+				math.max(1, d.size * s * 0.22),
+				fade(rl.Color{120, 124, 130, 255}, 0.30),
+			)
+		case .Stain:
+			c := w2s(g, d.a)
+			for k := 3; k >= 1; k -= 1 {
+				t := f32(k) / 3.0
+				rl.DrawEllipse(i32(c.x), i32(c.y), d.size * s * t, d.size * s * 0.62 * t, fade(d.tint, 0.13))
+			}
+		case .Scuff:
+			a := w2s(g, d.a)
+			b := w2s(g, d.b)
+			rl.DrawLineEx(a, b, math.max(1, d.size * s * 0.3), fade(d.tint, 0.16))
+		case .Coat_Print:
+			// The impression you left on the floor. Deliberately human-shaped.
+			c := w2s(g, d.a)
+			draw_ellipse_rot(c, s * 0.46, s * 0.30, 0.4, fade(d.tint, 0.40))
+			draw_ellipse_rot({c.x + s * 0.30, c.y - s * 0.18}, s * 0.16, s * 0.15, 0, fade(d.tint, 0.34))
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Standing things
+// ---------------------------------------------------------------------------
+
+// The cap is the surface you would see looking straight down; the face is the
+// side that catches light. Every solid tile is drawn as this pair.
+@(private = "file")
+draw_solid_tile :: proc(g: ^Game, x, y: int, t: Tile) {
+	s := camera_scale(g.camera)
+	h := tile_height(t)
+	n := hashf(x, y)
+
+	cap_col, face_col: rl.Color
+	switch t {
+	case .Wall:
+		cap_col = scale_rgb(rl.Color{84, 84, 90, 255}, 0.92 + n * 0.16)
+		face_col = rl.Color{126, 122, 118, 255}
+	case .Wall_Board:
+		cap_col = rl.Color{92, 92, 96, 255}
+		face_col = rl.Color{224, 222, 212, 255}
+	case .Wall_Screen:
+		cap_col = rl.Color{72, 76, 82, 255}
+		face_col = rl.Color{54, 72, 92, 255}
+	case .Wall_Notice:
+		cap_col = rl.Color{88, 84, 80, 255}
+		face_col = rl.Color{168, 132, 92, 255}
+	case .Wall_Exit:
+		cap_col = rl.Color{86, 70, 66, 255}
+		face_col = rl.Color{148, 66, 54, 255}
+	case .Rack:
+		cap_col = scale_rgb(rl.Color{68, 72, 80, 255}, 0.9 + n * 0.2)
+		face_col = rl.Color{54, 60, 68, 255}
+	case .Desk:
+		cap_col = scale_rgb(rl.Color{138, 108, 78, 255}, 0.92 + n * 0.14)
+		face_col = rl.Color{100, 76, 56, 255}
+	case .Bench:
+		cap_col = rl.Color{118, 120, 126, 255}
+		face_col = rl.Color{88, 90, 96, 255}
+	case .Crate:
+		cap_col = scale_rgb(rl.Color{150, 122, 84, 255}, 0.9 + n * 0.2)
+		face_col = rl.Color{112, 90, 60, 255}
+	case .Shelf:
+		cap_col = rl.Color{94, 96, 100, 255}
+		face_col = rl.Color{70, 72, 76, 255}
+	case .Spool:
+		cap_col = rl.Color{90, 94, 86, 255}
+		face_col = rl.Color{66, 70, 64, 255}
+	case .Printer:
+		cap_col = rl.Color{226, 222, 212, 255}
+		face_col = rl.Color{176, 174, 168, 255}
+	case .Chair:
+		cap_col = rl.Color{82, 86, 96, 255}
+		face_col = rl.Color{62, 66, 74, 255}
+	case .Void, .Floor_Tech, .Floor_Corridor, .Floor_Office, .Door:
+		return
+	}
+
+	south := tilemap_at(&g.scene.grid, x, y + 1)
+	south_open := !tile_blocks(south) || tile_height(south) < h - 0.05
+
+	// Contact shadow, but only where it would land on open floor. Casting one
+	// from every tile of a stacked block painted dark bands across the racks.
+	if !tile_blocks(south) {
+		shadow := world_rect(g, f32(x) - 0.06, f32(y) + h * 0.55, 1.12, 1.0)
+		rl.DrawRectangleRec(shadow, fade(rl.Color{8, 9, 11, 255}, 0.30))
+	}
+
+	if h > 0 && south_open {
+		face := world_rect(g, f32(x), f32(y) + 1 - h * 0.35, 1, h)
+		rl.DrawRectangleGradientEx(
+			face,
+			scale_rgb(face_col, 1.12),
+			scale_rgb(face_col, 0.62),
+			scale_rgb(face_col, 0.62),
+			scale_rgb(face_col, 1.12),
+		)
+	}
+
+	// The cap is shortened to make room for the face below it -- but only on the
+	// tile that actually has a face. Shortening every tile of a stacked block
+	// left a strip of bare floor showing between them, which read as black bars
+	// painted across the rack row.
+	cap_h := south_open ? 1 - h * 0.35 : f32(1.0)
+	cap := world_rect(g, f32(x), f32(y), 1, cap_h)
+	rl.DrawRectangleRec(cap, cap_col)
+
+	// A lit lip along the top edge, which is what separates one object from the
+	// one behind it without drawing an outline around everything.
+	if !tile_blocks(tilemap_at(&g.scene.grid, x, y - 1)) {
+		rl.DrawRectangleRec({cap.x, cap.y, cap.width, math.max(1, s * 0.03)}, fade(rl.Color{150, 148, 140, 255}, 0.30))
+	}
+
+	draw_tile_detail(g, x, y, t, cap, s)
+}
+
+// The difference between a grey box and a server rack is about six lines of
+// detail, and this is where they go.
+@(private = "file")
+draw_tile_detail :: proc(g: ^Game, x, y: int, t: Tile, cap: rl.Rectangle, s: f32) {
+	#partial switch t {
+	case .Rack:
+		// Vent slots across the cap.
+		rows := 5
+		for i in 0 ..< rows {
+			ry := cap.y + cap.height * (0.16 + f32(i) * 0.17)
+			rl.DrawRectangleRec({cap.x + cap.width * 0.12, ry, cap.width * 0.76, math.max(1, s * 0.018)}, fade(rl.Color{16, 17, 19, 255}, 0.34))
+		}
+		// Status LEDs on the front face, blinking on their own clocks.
+		if tilemap_at(&g.scene.grid, x, y + 1) != .Rack {
+			fy := cap.y + cap.height + s * 0.10
+			for i in 0 ..< 4 {
+				seed := hashf(x * 13 + i, y * 5)
+				lit := math.sin(g.time * (1.4 + seed * 3.0) + seed * 30) > -0.35
+				col := seed > 0.72 ? rl.Color{240, 176, 96, 255} : rl.Color{120, 226, 200, 255}
+				rl.DrawRectangleRec(
+					{cap.x + cap.width * (0.16 + f32(i) * 0.20), fy, math.max(1.5, s * 0.05), math.max(1.5, s * 0.035)},
+					fade(col, lit ? 0.95 : 0.16),
+				)
+			}
+		}
+	case .Desk:
+		// Wood grain, faint.
+		for i in 0 ..< 3 {
+			gy := cap.y + cap.height * (0.25 + f32(i) * 0.25)
+			rl.DrawRectangleRec({cap.x + cap.width * 0.06, gy, cap.width * 0.88, math.max(1, s * 0.012)}, fade(rl.Color{40, 30, 22, 255}, 0.30))
+		}
+	case .Wall_Board:
+		// Handwriting on the whiteboard, as marks rather than letters.
+		for i in 0 ..< 4 {
+			seed := hashf(x * 3 + i, y + i)
+			ly := cap.y + cap.height * 0.30 + f32(i) * s * 0.10
+			rl.DrawRectangleRec(
+				{cap.x + cap.width * 0.10, ly, cap.width * (0.30 + seed * 0.55), math.max(1, s * 0.022)},
+				fade(rl.Color{52, 62, 80, 255}, 0.55),
+			)
+		}
+	case .Wall_Screen:
+		// The frozen scoreboard: rows that do not move, because it stopped.
+		for i in 0 ..< 6 {
+			ly := cap.y + cap.height * 0.14 + f32(i) * s * 0.115
+			w := cap.width * (0.26 + hashf(x + i, y * 2) * 0.5)
+			rl.DrawRectangleRec({cap.x + cap.width * 0.12, ly, w, math.max(1, s * 0.05)}, fade(rl.Color{96, 180, 220, 255}, 0.62))
+		}
+	case .Wall_Notice:
+		for i in 0 ..< 3 {
+			seed := hashf(x + i * 5, y)
+			rl.DrawRectangleRec(
+				{cap.x + cap.width * (0.10 + seed * 0.4), cap.y + cap.height * (0.2 + f32(i) * 0.24), cap.width * 0.34, cap.height * 0.2},
+				fade(rl.Color{226, 222, 210, 255}, 0.7),
+			)
+		}
+	case .Wall_Exit:
+		rl.DrawRectangleRec(
+			{cap.x + cap.width * 0.18, cap.y + cap.height * 0.3, cap.width * 0.64, cap.height * 0.4},
+			fade(rl.Color{250, 140, 110, 255}, 0.9),
+		)
+	case .Printer:
+		rl.DrawRectangleRec({cap.x + cap.width * 0.16, cap.y + cap.height * 0.5, cap.width * 0.68, cap.height * 0.3}, fade(rl.Color{60, 60, 62, 255}, 0.8))
+	case .Crate:
+		rl.DrawRectangleLinesEx({cap.x + cap.width * 0.12, cap.y + cap.height * 0.16, cap.width * 0.76, cap.height * 0.66}, math.max(1, s * 0.02), fade(rl.Color{50, 40, 28, 255}, 0.7))
+	case .Shelf:
+		for i in 0 ..< 3 {
+			rl.DrawRectangleRec(
+				{cap.x + cap.width * 0.1, cap.y + cap.height * (0.2 + f32(i) * 0.26), cap.width * 0.8, math.max(1, s * 0.03)},
+				fade(rl.Color{28, 29, 31, 255}, 0.8),
+			)
+		}
+	case .Spool:
+		c := rl.Vector2{cap.x + cap.width * 0.5, cap.y + cap.height * 0.5}
+		rl.DrawCircleV(c, cap.width * 0.42, rl.Color{46, 48, 44, 255})
+		rl.DrawCircleV(c, cap.width * 0.16, rl.Color{30, 31, 29, 255})
+	case .Chair:
+		c := rl.Vector2{cap.x + cap.width * 0.5, cap.y + cap.height * 0.55}
+		rl.DrawCircleV(c, cap.width * 0.34, rl.Color{54, 56, 62, 255})
+		rl.DrawCircleV(c, cap.width * 0.22, rl.Color{40, 42, 48, 255})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+draw_actor :: proc(g: ^Game, a: Actor, is_player: bool) {
+	s := camera_scale(g.camera)
+	base := w2s(g, a.pos)
+
+	coat: rl.Color
+	skin: rl.Color
+	hair: rl.Color
+	switch a.kind {
+	case .Player:
+		// The detective reads warmest of the three: you should always be able to
+		// find yourself on a dark floor without a marker over your head.
+		coat = rl.Color{104, 110, 132, 255}
+		skin = rl.Color{212, 172, 136, 255}
+		hair = rl.Color{86, 68, 54, 255}
+	case .Sysadmin:
+		coat = rl.Color{108, 132, 122, 255}
+		skin = rl.Color{198, 156, 118, 255}
+		hair = rl.Color{56, 48, 46, 255}
+	case .Sleeper:
+		coat = rl.Color{152, 116, 162, 255}
+		skin = rl.Color{216, 178, 144, 255}
+		hair = rl.Color{48, 40, 42, 255}
+	}
+
+	// Contact shadow, offset a little south of the body.
+	rl.DrawEllipse(i32(base.x), i32(base.y + s * 0.16), s * 0.40, s * 0.22, fade(rl.Color{6, 7, 9, 255}, 0.42))
+
+	if a.kind == .Sleeper {
+		// Folded forward over the desk: shoulders square, head down and away,
+		// one arm out across the surface.
+		draw_ellipse_rot(base, s * 0.34, s * 0.26, 0, coat)
+		draw_ellipse_rot({base.x - s * 0.30, base.y - s * 0.10}, s * 0.24, s * 0.09, -0.5, coat)
+		head := rl.Vector2{base.x, base.y - s * 0.34}
+		rl.DrawCircleV(head, s * 0.19, skin)
+		draw_ellipse_rot({head.x, head.y - s * 0.05}, s * 0.20, s * 0.16, 0, hair)
+		return
+	}
+
+	swing := math.sin(a.bob) * 0.34
+	lift := math.abs(math.sin(a.bob)) * s * 0.035
+	ang := a.facing
+	perp := ang + math.PI * 0.5
+
+	body := rl.Vector2{base.x, base.y - s * 0.12 - lift}
+
+	// Order matters: arms go down before the coat, so the torso sits on top of
+	// them and the silhouette stays one solid mass instead of three blobs.
+	for side in 0 ..< 2 {
+		sign := side == 0 ? f32(1) : f32(-1)
+		phase := swing * sign
+		ax := body.x + math.cos(perp) * s * 0.27 * sign + math.cos(ang) * s * phase * 0.55
+		ay := body.y + math.sin(perp) * s * 0.27 * sign + math.sin(ang) * s * phase * 0.55
+		draw_ellipse_rot({ax, ay}, s * 0.105, s * 0.15, ang, scale_rgb(coat, 0.74))
+	}
+
+	// The coat: broad across the shoulders, narrow front-to-back. That ratio is
+	// the entire reason a top-down figure reads as facing somewhere.
+	draw_ellipse_rot(body, s * 0.30, s * 0.235, perp, scale_rgb(coat, 0.80))
+	// Shoulder line, forward of centre and slightly narrower, catching the light.
+	draw_ellipse_rot(
+		{body.x + math.cos(ang) * s * 0.055, body.y + math.sin(ang) * s * 0.055},
+		s * 0.255,
+		s * 0.175,
+		perp,
+		coat,
+	)
+	// The collar: a thin bright arc at the front of the shoulders.
+	draw_ellipse_rot(
+		{body.x + math.cos(ang) * s * 0.13, body.y + math.sin(ang) * s * 0.13},
+		s * 0.145,
+		s * 0.075,
+		perp,
+		scale_rgb(coat, 1.30),
+	)
+
+	// Head sits forward of the shoulders and is clearly smaller than them, with
+	// the hair mass pushed to the back so front and back are never ambiguous.
+	head := rl.Vector2{
+		body.x + math.cos(ang) * s * 0.075,
+		body.y + math.sin(ang) * s * 0.075 - s * 0.025,
+	}
+	rl.DrawCircleV(head, s * 0.145, skin)
+	draw_ellipse_rot(
+		{head.x - math.cos(ang) * s * 0.055, head.y - math.sin(ang) * s * 0.055},
+		s * 0.135,
+		s * 0.125,
+		ang,
+		hair,
+	)
+	// A sliver of brow catching the light, on the leading edge of the head.
+	draw_ellipse_rot(
+		{head.x + math.cos(ang) * s * 0.055, head.y + math.sin(ang) * s * 0.055},
+		s * 0.075,
+		s * 0.045,
+		perp,
+		scale_rgb(skin, 1.12),
+	)
+
+	if a.kind == .Sysadmin {
+		// Still holding both coffees.
+		for side in 0 ..< 2 {
+			sign := side == 0 ? f32(1) : f32(-1)
+			cx := body.x + math.cos(perp) * s * 0.30 * sign + math.cos(ang) * s * 0.19
+			cy := body.y + math.sin(perp) * s * 0.30 * sign + math.sin(ang) * s * 0.19
+			rl.DrawCircleV({cx, cy}, s * 0.062, rl.Color{226, 220, 206, 255})
+			rl.DrawCircleV({cx, cy}, s * 0.040, rl.Color{78, 56, 40, 255})
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Detail props
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+draw_detail_prop :: proc(g: ^Game, p: Detail_Prop) {
+	s := camera_scale(g.camera)
+	c := w2s(g, p.pos)
+
+	switch p.kind {
+	case .Monitor:
+		// Seen from above: a thin bright screen edge and the glow it throws
+		// forward onto the desk.
+		rl.DrawEllipse(i32(c.x), i32(c.y + s * 0.06), s * 0.30, s * 0.12, fade(rl.Color{8, 9, 11, 255}, 0.35))
+		body := rl.Rectangle{c.x - s * 0.30, c.y - s * 0.10, s * 0.60, s * 0.20}
+		rl.DrawRectangleRec(body, rl.Color{28, 30, 33, 255})
+		screen := rl.Rectangle{c.x - s * 0.27, c.y - s * 0.07, s * 0.54, s * 0.10}
+		rl.DrawRectangleRec(screen, fade(rl.Color{150, 232, 216, 255}, 0.85))
+		// Text rows on the screen, frozen mid-submission.
+		for i in 0 ..< 3 {
+			rl.DrawRectangleRec(
+				{screen.x + s * 0.03, screen.y + f32(i) * s * 0.03 + s * 0.01, s * (0.18 + hashf(i, int(p.pos.x)) * 0.28), math.max(1, s * 0.014)},
+				fade(rl.Color{18, 40, 38, 255}, 0.7),
+			)
+		}
+	case .Keyboard:
+		rl.DrawRectangleRec({c.x - s * 0.24, c.y - s * 0.07, s * 0.48, s * 0.14}, rl.Color{42, 44, 48, 255})
+		for i in 0 ..< 4 {
+			rl.DrawRectangleRec({c.x - s * 0.21 + f32(i) * s * 0.11, c.y - s * 0.04, s * 0.09, s * 0.08}, fade(rl.Color{62, 64, 68, 255}, 0.9))
+		}
+	case .Papers:
+		for i in 0 ..< 3 {
+			seed := hashf(i * 7, int(p.pos.y * 10))
+			draw_ellipse_rot(
+				{c.x + (seed - 0.5) * s * 0.3, c.y + (hashf(i, 3) - 0.5) * s * 0.22},
+				s * 0.16,
+				s * 0.12,
+				seed * 2,
+				fade(rl.Color{206, 200, 184, 255}, 0.86),
+			)
+		}
+	case .Cup:
+		rl.DrawCircleV({c.x, c.y + s * 0.02}, s * 0.085, fade(rl.Color{8, 9, 11, 255}, 0.4))
+		rl.DrawCircleV(c, s * 0.08, rl.Color{212, 206, 194, 255})
+		rl.DrawCircleV(c, s * 0.055, rl.Color{52, 38, 28, 255})
+	case .Toolbox:
+		rl.DrawRectangleRec({c.x - s * 0.18, c.y - s * 0.12, s * 0.36, s * 0.24}, rl.Color{146, 72, 44, 255})
+		rl.DrawRectangleRec({c.x - s * 0.06, c.y - s * 0.16, s * 0.12, s * 0.05}, rl.Color{60, 60, 62, 255})
+	case .Cable_Coil:
+		rl.DrawCircleV(c, s * 0.17, rl.Color{30, 32, 34, 255})
+		rl.DrawCircleV(c, s * 0.11, rl.Color{44, 46, 48, 255})
+		rl.DrawCircleV(c, s * 0.05, rl.Color{26, 28, 30, 255})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The world pass
+// ---------------------------------------------------------------------------
+
+render_world :: proc(g: ^Game) {
+	rl.ClearBackground(rl.Color{12, 13, 15, 255})
+
+	if !g.scene.built {
 		return
 	}
 
 	draw_floor(g)
-	draw_room_details(g)
-	draw_path(g)
-	draw_click_marker(g)
+	draw_decals(g)
 
-	// Build the draw list, sort once, paint.
+	x0, y0, x1, y1 := camera_visible_tiles(g.camera)
 	items := make([dynamic]Draw_Item, context.temp_allocator)
 
-	for prop, i in g.scene.props {
-		// Depth is measured at the far corner so tall things behind short ones
-		// still resolve correctly.
-		append(
-			&items,
-			Draw_Item {
-				depth = depth_key(prop.pos.x + prop.size.x, prop.pos.y + prop.size.y, 0),
-				kind = .Prop,
-				index = i,
-			},
-		)
+	for y in y0 ..= y1 {
+		for x in x0 ..= x1 {
+			t := tilemap_at(&g.scene.grid, x, y)
+			if tile_is_floor(t) || t == .Void {
+				continue
+			}
+			// Sorted by the bottom edge of the tile, which is where it meets the
+			// floor and therefore what decides who is in front of whom.
+			append(&items, Draw_Item{depth = f32(y) + 1, kind = .Tile, index = 0, x = x, y = y})
+		}
 	}
 
-	append(
-		&items,
-		Draw_Item{depth = depth_key(g.player_ent.pos.x, g.player_ent.pos.y, 0.5), kind = .Player, index = 0},
-	)
-
-	for it, i in g.scene.interactables {
-		if !interactable_visible(g, it) {
+	for a, i in g.scene.actors {
+		if !actor_exists(g, a) {
 			continue
 		}
-		// Orbs float, so they sort above whatever they are attached to.
-		append(
-			&items,
-			Draw_Item{depth = depth_key(it.pos.x, it.pos.y, it.height + 4), kind = .Orb, index = i},
-		)
+		append(&items, Draw_Item{depth = a.pos.y, kind = .Actor, index = i})
+	}
+	append(&items, Draw_Item{depth = g.player_ent.pos.y, kind = .Actor, index = -1})
+
+	for p, i in g.scene.props {
+		append(&items, Draw_Item{depth = p.pos.y + 0.05, kind = .Prop, index = i})
 	}
 
 	slice.sort_by(items[:], proc(a, b: Draw_Item) -> bool {
@@ -367,60 +616,91 @@ render_world :: proc(g: ^Game) {
 
 	for item in items {
 		switch item.kind {
-		case .Prop:
-			p := g.scene.props[item.index]
-			draw_ground_shadow(g.camera, p.pos + p.size*0.5, math.max(p.size.x, p.size.y)*0.62, 0.35)
-			draw_box(g.camera, p.pos, p.size, p.height, p.top, p.side)
-			if p.emissive > 0 {
-				draw_emissive_face(g.camera, p)
+		case .Tile:
+			draw_solid_tile(g, item.x, item.y, tilemap_at(&g.scene.grid, item.x, item.y))
+		case .Actor:
+			if item.index < 0 {
+				draw_actor(g, g.player_ent, true)
+			} else {
+				draw_actor(g, g.scene.actors[item.index], false)
 			}
-		case .Player:
-			draw_player(g)
-		case .Orb:
-			draw_orb(g, item.index)
+		case .Prop:
+			draw_detail_prop(g, g.scene.props[item.index])
 		}
-	}
-
-	// Labels last, so nothing paints over them.
-	if g.hovered_interactable >= 0 {
-		draw_orb_label(g, g.hovered_interactable)
 	}
 }
 
-// A glowing panel on the front face of a monitor or rack. This is what the
-// bloom in the painterly pass latches onto.
-draw_emissive_face :: proc(cam: Iso_Camera, p: Prop) {
-	inset := f32(0.12)
-	x0 := p.pos.x + inset
-	x1 := p.pos.x + p.size.x - inset
-	y := p.pos.y + p.size.y
-	z0 := p.height * 0.25
-	z1 := p.height * 0.92
+// ---------------------------------------------------------------------------
+// Lighting
+// ---------------------------------------------------------------------------
 
-	a := world_to_screen(cam, x0, y, z1)
-	b := world_to_screen(cam, x1, y, z1)
-	c := world_to_screen(cam, x1, y, z0)
-	d := world_to_screen(cam, x0, y, z0)
+// What the light map clears to: the room with every lamp in it switched off.
+// Deliberately just above the point where you would lose the floor, and named
+// apart from lighting.odin's AMBIENT, which is a different quantity.
+LIGHTMAP_AMBIENT :: rl.Color{64, 68, 82, 255}
 
-	glow := rl.Color{150, 226, 206, 255}
-	draw_quad(a, b, c, d, fade(glow, 0.55 * p.emissive))
-	// A brighter core keeps it above the bloom knee.
-	inner_a := rl.Vector2{a.x + (b.x-a.x)*0.12, a.y + (d.y-a.y)*0.16}
-	inner_b := rl.Vector2{b.x - (b.x-a.x)*0.12, b.y + (c.y-b.y)*0.16}
-	inner_c := rl.Vector2{c.x - (c.x-d.x)*0.12, c.y - (c.y-b.y)*0.16}
-	inner_d := rl.Vector2{d.x + (c.x-d.x)*0.12, d.y - (d.y-a.y)*0.16}
-	draw_quad(inner_a, inner_b, inner_c, inner_d, fade(rl.Color{210, 250, 236, 255}, 0.85 * p.emissive))
-
-	// Server faces need more than one bright rectangle. Tiny status rows turn a
-	// block into a machine, and the alternating intensity makes the rack row
-	// feel alive under the bloom pass.
-	for i := 1; i < 5; i += 1 {
-		t := f32(i) / 5.0
-		la := rl.Vector2{a.x + (d.x-a.x)*t + 4, a.y + (d.y-a.y)*t}
-		lb := rl.Vector2{b.x + (c.x-b.x)*t - 4, b.y + (c.y-b.y)*t}
-		rl.DrawLineEx(la, lb, 1, fade(COL_INK, 0.65))
-		if i % 2 == 0 {
-			rl.DrawCircleV(rl.Vector2{lb.x - 7, lb.y}, 1.6, fade(COL_PASS, 0.85 * p.emissive))
-		}
+light_intensity :: proc(l: Light, time: f32) -> f32 {
+	if l.flicker <= 0 {
+		return l.intensity
 	}
+	// A dying fluorescent does not fade, it stutters. Two detuned sines plus a
+	// hard dropout reads as mains hum far better than noise does.
+	t := time * 8.4 + l.phase
+	wobble := (math.sin(t) * 0.5 + math.sin(t * 2.7) * 0.5)
+	dip := math.sin(time * 1.3 + l.phase) > 0.94 ? f32(0.45) : f32(1.0)
+	return l.intensity * (1.0 - l.flicker * 0.18 * (1.0 - wobble)) * dip
+}
+
+// Builds the light map: ambient everywhere, plus one additive falloff per
+// source, then multiplied over the scene so unlit corners genuinely go dark.
+render_lighting :: proc(g: ^Game) {
+	rl.ClearBackground(LIGHTMAP_AMBIENT)
+	if !g.scene.built {
+		return
+	}
+
+	s := camera_scale(g.camera)
+	rl.BeginBlendMode(.ADDITIVE)
+
+	for l in g.scene.lights {
+		c := w2s(g, l.pos)
+		r := l.radius * s
+		// Skip anything that cannot reach the screen.
+		if c.x + r < 0 || c.y + r < 0 || c.x - r > f32(rl.GetScreenWidth()) || c.y - r > f32(rl.GetScreenHeight()) {
+			continue
+		}
+		inten := light_intensity(l, g.time)
+		// One falloff per source, no stacked core. Adding a second gradient on
+		// top drove the centre of every tube straight to white and flattened
+		// everything standing under it into a silhouette.
+		rl.DrawCircleGradient(c, r, fade(l.color, inten), fade(l.color, 0))
+	}
+
+	// You carry a little light of your own, so you are never a silhouette in an
+	// unlit corridor.
+	pc := w2s(g, g.player_ent.pos)
+	rl.DrawCircleGradient(pc, s * 3.0, fade(rl.Color{198, 186, 168, 255}, 0.22), fade(rl.Color{198, 186, 168, 255}, 0))
+
+	rl.EndBlendMode()
+}
+
+// After the light map has been multiplied down, the sources themselves are put
+// back additively -- otherwise the brightest things in the room get dimmed by
+// their own lighting.
+render_glow :: proc(g: ^Game) {
+	if !g.scene.built {
+		return
+	}
+	s := camera_scale(g.camera)
+	rl.BeginBlendMode(.ADDITIVE)
+	for l in g.scene.lights {
+		c := w2s(g, l.pos)
+		r := l.radius * s * 0.30
+		if c.x + r < 0 || c.y + r < 0 || c.x - r > f32(rl.GetScreenWidth()) || c.y - r > f32(rl.GetScreenHeight()) {
+			continue
+		}
+		inten := light_intensity(l, g.time)
+		rl.DrawCircleGradient(c, r, fade(l.color, inten * 0.20), fade(l.color, 0))
+	}
+	rl.EndBlendMode()
 }

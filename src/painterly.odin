@@ -20,19 +20,34 @@ Painterly :: struct {
 	u_vignette:   i32,
 	u_bloom:      i32,
 	u_grade:      i32,
+	u_exposure:       i32,
+	u_exposure_ref:   i32,
+	u_exposure_adapt: i32,
 	// tunables, adjustable at runtime with F6-F9 while iterating
 	wobble:   f32,
 	grain:    f32,
 	vignette: f32,
 	bloom:    f32,
 	grade:    f32,
+	// Exposure. See the note on exposure_ref below -- this is the fix for a real
+	// coupling between two files, not a knob for taste.
+	exposure:       f32,
+	exposure_ref:   f32,
+	exposure_adapt: f32,
+	// The render target's texture id, so the mip chain and filter are only
+	// reconfigured when the target is actually recreated (window resize).
+	mip_tex_id: u32,
 }
 
 painterly_load :: proc(p: ^Painterly, assets_dir: string) {
-	p.wobble = 1.0
-	p.grain = 1.0
-	p.vignette = 1.0
-	p.bloom = 1.0
+	// Tuned down from full strength. These defaults were set when the world was
+	// a single painted still; now that it is real geometry that scrolls, a hard
+	// wobble smears the tile edges into mush and the bloom fogs the whole floor.
+	// Enough to keep the painted feel, not enough to eat the room.
+	p.wobble = 0.34
+	p.grain = 0.55
+	p.vignette = 0.85
+	p.bloom = 0.65
 	p.grade = 1.0
 	p.enabled = true
 

@@ -25,6 +25,13 @@ main :: proc() {
 	g.assets_dir = assets_dir
 	game_init_state(g)
 
+	rl.SetConfigFlags({.WINDOW_RESIZABLE, .MSAA_4X_HINT, .VSYNC_HINT})
+	rl.InitWindow(WINDOW_W, WINDOW_H, TITLE)
+	defer rl.CloseWindow()
+	rl.SetTargetFPS(60)
+	rl.SetExitKey(.KEY_NULL) // Escape closes menus, it does not quit the game
+
+	// Content includes the floor plan, so this is what builds the room.
 	if !game_load_content(g) {
 		fmt.eprintln("content failed to load:")
 		for e in g.load_errors {
@@ -33,29 +40,23 @@ main :: proc() {
 		fmt.eprintln("\nrun with --test for the full report")
 	}
 
-	rl.SetConfigFlags({.WINDOW_RESIZABLE, .MSAA_4X_HINT, .VSYNC_HINT})
-	rl.InitWindow(WINDOW_W, WINDOW_H, TITLE)
-	defer rl.CloseWindow()
-	rl.SetTargetFPS(60)
-	rl.SetExitKey(.KEY_NULL) // Escape closes menus, it does not quit the game
-
 	load_presentation(g)
 	defer unload_presentation(g)
 
 	audio_init(&g_audio)
 	defer audio_shutdown(&g_audio)
 
-	build_server_room(&g.scene)
+	g.player_ent.kind = .Player
 	g.player_ent.pos = g.scene.spawn
-	g.player_ent.pending_interactable = -1
-	camera_init(&g.camera, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight()))
-	g.camera.bounds_min = {0, 0}
-	g.camera.bounds_max = {f32(g.scene.nav.w), f32(g.scene.nav.h)}
-	camera_center_on(&g.camera, g.player_ent.pos, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight()))
+	g.player_ent.facing = math.PI * 0.5 // looking down the room
+	camera_init(&g.camera, g.player_ent.pos)
+	camera_set_bounds(&g.camera, g.scene.grid.w, g.scene.grid.h)
+	camera_snap(&g.camera, g.player_ent.pos)
 
 	g.mode = .Title
 
 	shot_mode := has_flag_arg("--screenshot")
+	g.scripted = shot_mode
 	frame := 0
 
 	for !rl.WindowShouldClose() {
@@ -76,64 +77,9 @@ main :: proc() {
 	}
 }
 
-// Drives the game through a fixed sequence and captures each screen, so the
-// visuals can be checked without a human at the keyboard. Returns true when
-// the sequence is finished.
-screenshot_script :: proc(g: ^Game, frame: int) -> bool {
-	switch frame {
-	case 30:
-		rl.TakeScreenshot("shot_1_title.png")
-	case 40:
-		game_set_mode(g, .World)
-	case 70:
-		rl.TakeScreenshot("shot_2_world.png")
-	case 80:
-		dialogue_start(g, &g.script, "the_body_desk")
-		game_set_mode(g, .Dialogue)
-	case 82:
-		dialogue_skip_reveal(&g.dialogue)
-	case 100:
-		rl.TakeScreenshot("shot_3_dialogue.png")
-	case 110:
-		// Force a check popup so the modifier breakdown can be inspected.
-		flag_set(g, "has_headphones", true)
-		dialogue_start(g, &g.script, "whiteboard_hand")
-	case 112:
-		dialogue_skip_reveal(&g.dialogue)
-		if len(g.dialogue.options) > 0 {
-			dialogue_select(g, 0)
-		}
-	case 130:
-		rl.TakeScreenshot("shot_4_check.png")
-	case 135:
-		dialogue_commit_check(g)
-	case 215:
-		rl.TakeScreenshot("shot_5_roll.png")
-	case 225:
-		dialogue_finish_check(g)
-		dialogue_close(g)
-		g.pending_level_ups = 2
-		g.sheet_tab = .Skills
-		game_set_mode(g, .Sheet)
-	case 240:
-		rl.TakeScreenshot("shot_6_skills.png")
-	case 245:
-		apply_effect(g, Effect{kind = .Add_Thought, id = "harmonic_greed"})
-		apply_effect(g, Effect{kind = .Add_Thought, id = "the_invigilator"})
-		g.sheet_tab = .Thoughts
-	case 260:
-		rl.TakeScreenshot("shot_7_thoughts.png")
-	case 270:
-		return true
-	}
-	return false
-}
-
 // Content and assets live next to the executable's project root, not the CWD,
 // so the game can be launched from anywhere.
 resolve_dirs :: proc() -> (content, assets: string) {
-	// Prefer an explicit override, then the project layout relative to the
-	// binary, then the current directory.
 	for arg, i in os.args {
 		if arg == "--content" && i + 1 < len(os.args) {
 			return os.args[i + 1], fmt.aprintf("%s/../assets", os.args[i + 1])
@@ -157,53 +103,34 @@ load_presentation :: proc(g: ^Game) {
 	g.font_small = load_font_or_default(fmt.tprintf("%s/fonts/body-condensed.ttf", g.assets_dir))
 	g.font_title = load_font_or_default(fmt.tprintf("%s/fonts/title.ttf", g.assets_dir))
 
-	// Key art gives the title screen an immediate sense of place before the
-	// player sees the deliberately abstracted isometric room.
-	art_path := fmt.tprintf("%s/art/server_room_key_art.png", g.assets_dir)
-	if os.exists(art_path) {
-		g.title_art = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", art_path))))
-		g.title_art_loaded = g.title_art.id != 0
-		if g.title_art_loaded {
-			rl.SetTextureFilter(g.title_art, .BILINEAR)
-		}
-	}
-	portrait_path := fmt.tprintf("%s/art/detective_portrait.png", g.assets_dir)
-	if os.exists(portrait_path) {
-		g.detective_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", portrait_path))))
-		g.detective_portrait_loaded = g.detective_portrait.id != 0
-		if g.detective_portrait_loaded {
-			rl.SetTextureFilter(g.detective_portrait, .BILINEAR)
-		}
-	}
-	sysadmin_path := fmt.tprintf("%s/art/sysadmin_portrait.png", g.assets_dir)
-	if os.exists(sysadmin_path) {
-		g.sysadmin_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", sysadmin_path))))
-		g.sysadmin_portrait_loaded = g.sysadmin_portrait.id != 0
-		if g.sysadmin_portrait_loaded {
-			rl.SetTextureFilter(g.sysadmin_portrait, .BILINEAR)
-		}
-	}
-	priya_path := fmt.tprintf("%s/art/priya_portrait.png", g.assets_dir)
-	if os.exists(priya_path) {
-		g.priya_portrait = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", priya_path))))
-		g.priya_portrait_loaded = g.priya_portrait.id != 0
-		if g.priya_portrait_loaded {
-			rl.SetTextureFilter(g.priya_portrait, .BILINEAR)
-		}
-	}
-	world_path := fmt.tprintf("%s/art/server_room_topdown.png", g.assets_dir)
-	if os.exists(world_path) {
-		g.world_art = rl.LoadTexture(cstring(raw_data(fmt.tprintf("%s\x00", world_path))))
-		g.world_art_loaded = g.world_art.id != 0
-		if g.world_art_loaded {
-			rl.SetTextureFilter(g.world_art, .BILINEAR)
-		}
-	}
+	// The only painted art left is the title card and the dossier portraits.
+	// The room itself is no longer a picture of a room.
+	g.title_art, g.title_art_loaded = load_texture_if_present(fmt.tprintf("%s/art/server_room_key_art.png", g.assets_dir))
+	g.detective_portrait, g.detective_portrait_loaded = load_texture_if_present(fmt.tprintf("%s/art/detective_portrait.png", g.assets_dir))
+	g.sysadmin_portrait, g.sysadmin_portrait_loaded = load_texture_if_present(fmt.tprintf("%s/art/sysadmin_portrait.png", g.assets_dir))
+	g.priya_portrait, g.priya_portrait_loaded = load_texture_if_present(fmt.tprintf("%s/art/priya_portrait.png", g.assets_dir))
 
-	g.scene_rt = rl.LoadRenderTexture(i32(rl.GetScreenWidth()), i32(rl.GetScreenHeight()))
+	w := i32(rl.GetScreenWidth())
+	h := i32(rl.GetScreenHeight())
+	g.scene_rt = rl.LoadRenderTexture(w, h)
+	g.light_rt = rl.LoadRenderTexture(w, h)
 	rl.SetTextureFilter(g.scene_rt.texture, .BILINEAR)
+	rl.SetTextureFilter(g.light_rt.texture, .BILINEAR)
 
 	painterly_load(&g.painterly, g.assets_dir)
+}
+
+load_texture_if_present :: proc(path: string) -> (rl.Texture2D, bool) {
+	tex: rl.Texture2D
+	if !os.exists(path) {
+		return tex, false
+	}
+	tex = rl.LoadTexture(strings.clone_to_cstring(path, context.temp_allocator))
+	if tex.id == 0 {
+		return tex, false
+	}
+	rl.SetTextureFilter(tex, .BILINEAR)
+	return tex, true
 }
 
 unload_presentation :: proc(g: ^Game) {
@@ -220,21 +147,24 @@ unload_presentation :: proc(g: ^Game) {
 	if g.priya_portrait_loaded {
 		rl.UnloadTexture(g.priya_portrait)
 	}
-	if g.world_art_loaded {
-		rl.UnloadTexture(g.world_art)
-	}
 	rl.UnloadRenderTexture(g.scene_rt)
+	rl.UnloadRenderTexture(g.light_rt)
 }
 
-// The render target has to track the window, or the painterly pass stretches.
-ensure_render_target :: proc(g: ^Game) {
+// The render targets have to track the window, or the light map stops lining up
+// with the scene it is lighting.
+ensure_render_targets :: proc(g: ^Game) {
 	w := i32(rl.GetScreenWidth())
 	h := i32(rl.GetScreenHeight())
-	if g.scene_rt.texture.width != w || g.scene_rt.texture.height != h {
-		rl.UnloadRenderTexture(g.scene_rt)
-		g.scene_rt = rl.LoadRenderTexture(w, h)
-		rl.SetTextureFilter(g.scene_rt.texture, .BILINEAR)
+	if g.scene_rt.texture.width == w && g.scene_rt.texture.height == h {
+		return
 	}
+	rl.UnloadRenderTexture(g.scene_rt)
+	rl.UnloadRenderTexture(g.light_rt)
+	g.scene_rt = rl.LoadRenderTexture(w, h)
+	g.light_rt = rl.LoadRenderTexture(w, h)
+	rl.SetTextureFilter(g.scene_rt.texture, .BILINEAR)
+	rl.SetTextureFilter(g.light_rt.texture, .BILINEAR)
 }
 
 // ---------------------------------------------------------------------------
@@ -251,35 +181,43 @@ update :: proc(g: ^Game, dt: f32) {
 		g.damage_flash -= dt * 1.6
 	}
 
-	handle_global_keys(g)
+	if !g.scripted {
+		handle_global_keys(g)
+	}
 
 	switch g.mode {
 	case .Title:
-		update_title(g)
+		if !g.scripted {
+			update_title(g)
+		}
 	case .World:
-		// The top-down room is a composed 2D scene, not a movable diorama. Keep
-		// the old camera path available only for the procedural fallback.
-		camera_update(&g.camera, dt, !g.world_art_loaded)
 		world_update(g, dt)
-		world_handle_input(g)
-		// Walking into an interactable opens its dialogue from player_arrive.
+		if !g.scripted {
+			world_handle_input(g)
+		}
+		// Walking up to something and pressing E is the only way in.
 		if g.dialogue.active {
 			game_set_mode(g, .Dialogue)
 		}
 	case .Dialogue:
-		camera_update(&g.camera, dt, false)
+		// The world keeps running underneath: the camera settles, the racks
+		// keep blinking, the sysadmin stays where they stopped.
 		world_update(g, dt)
 		dialogue_update(g, dt)
-		dialogue_handle_input(g)
+		if !g.scripted {
+			dialogue_handle_input(g)
+		}
 		if !g.dialogue.active {
 			game_set_mode(g, .World)
 		}
-		// Typewriter clatter, keyed off the reveal actually advancing.
 		if !dialogue_fully_revealed(&g.dialogue) {
 			audio_typewriter(&g_audio)
 		}
 	case .Sheet:
-		sheet_handle_input(g)
+		toasts_update(g, dt)
+		if !g.scripted {
+			sheet_handle_input(g)
+		}
 	case .Game_Over:
 		if rl.IsKeyPressed(.ENTER) {
 			restart(g)
@@ -291,7 +229,7 @@ update :: proc(g: ^Game, dt: f32) {
 
 update_title :: proc(g: ^Game) {
 	if rl.IsKeyPressed(.ENTER) || rl.IsMouseButtonPressed(.LEFT) {
-		game_set_mode(g, .World)
+		enter_world(g)
 		if g.scene.opening_node != "" {
 			if _, ok := g.script.nodes[g.scene.opening_node]; ok {
 				dialogue_start(g, &g.script, g.scene.opening_node)
@@ -301,10 +239,15 @@ update_title :: proc(g: ^Game) {
 	}
 	if rl.IsKeyPressed(.L) && save_exists(g) {
 		if load_game(g) {
-			g.player_ent.pos = g.player_ent.pos
-			game_set_mode(g, .World)
+			enter_world(g)
+			camera_snap(&g.camera, g.player_ent.pos)
 		}
 	}
+}
+
+enter_world :: proc(g: ^Game) {
+	game_set_mode(g, .World)
+	g.controls_hint = 9.0
 }
 
 handle_global_keys :: proc(g: ^Game) {
@@ -312,12 +255,11 @@ handle_global_keys :: proc(g: ^Game) {
 		return
 	}
 
-	// Hot reload. The whole point is to keep the run going while the writing
-	// changes underneath it.
+	// Hot reload. The whole point is to keep the run going while the writing --
+	// and now the floor plan -- changes underneath it.
 	if rl.IsKeyPressed(.F5) {
 		game_reload_content(g)
 		if g.dialogue.active {
-			// The node we were standing in may have been rewritten or removed.
 			if _, ok := g.script.nodes[g.dialogue.node_id]; ok {
 				g.dialogue.script = &g.script
 				dialogue_rebuild_options(g)
@@ -340,13 +282,14 @@ handle_global_keys :: proc(g: ^Game) {
 		return
 	}
 
-	if rl.IsKeyPressed(.C) {
+	// The sheets are the only chrome in the game, and they are all on demand.
+	if rl.IsKeyPressed(.TAB) || rl.IsKeyPressed(.C) {
 		g.sheet_tab = .Skills
 		game_set_mode(g, g.mode == .Sheet ? .World : .Sheet)
 	}
 	if rl.IsKeyPressed(.T) {
 		g.sheet_tab = .Thoughts
-		game_set_mode(g, .Sheet)
+		game_set_mode(g, g.mode == .Sheet ? .World : .Sheet)
 	}
 	if rl.IsKeyPressed(.J) {
 		g.sheet_tab = .Journal
@@ -374,8 +317,10 @@ restart :: proc(g: ^Game) {
 	}
 	character_init(&g.player, 3, 3, 3, 3)
 	g.pending_level_ups = 0
+
 	g.player_ent.pos = g.scene.spawn
-	g.player_ent.path = nil
+	g.player_ent.vel = {0, 0}
+	camera_snap(&g.camera, g.player_ent.pos)
 	for &it in g.scene.interactables {
 		it.seen = false
 	}
@@ -387,31 +332,59 @@ restart :: proc(g: ^Game) {
 // Draw
 // ---------------------------------------------------------------------------
 
-draw :: proc(g: ^Game) {
-	ensure_render_target(g)
+// Draws a render texture over the whole screen. Render textures come out of GL
+// bottom-up, so the source height is negative.
+blit_rt :: proc(rt: rl.RenderTexture2D) {
+	src := rl.Rectangle{0, 0, f32(rt.texture.width), -f32(rt.texture.height)}
+	dst := rl.Rectangle{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
+	rl.DrawTexturePro(rt.texture, src, dst, {0, 0}, 0, rl.WHITE)
+}
 
-	// The world goes through the painterly pass; the UI does not, because
-	// wobbling text is unreadable.
+draw :: proc(g: ^Game) {
+	ensure_render_targets(g)
+
+	// 1. The room, unlit.
 	rl.BeginTextureMode(g.scene_rt)
 	render_world(g)
+	rl.EndTextureMode()
+
+	// 2. The light map: ambient plus every source in the room.
+	rl.BeginTextureMode(g.light_rt)
+	render_lighting(g)
+	rl.EndTextureMode()
+
+	// 3. Multiply the light over the room, then put the sources themselves back
+	//    on top so they are not dimmed by their own falloff.
+	rl.BeginTextureMode(g.scene_rt)
+	rl.BeginBlendMode(.MULTIPLIED)
+	blit_rt(g.light_rt)
+	rl.EndBlendMode()
+	render_glow(g)
 	rl.EndTextureMode()
 
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.BLACK)
 
+	// The world goes through the painterly pass; the UI does not, because
+	// wobbling text is unreadable.
 	painterly_present(&g.painterly, g.scene_rt, g.time)
 
 	switch g.mode {
 	case .Title:
 		draw_title(g)
 	case .World:
-		draw_hud(g)
+		draw_world_overlay(g)
 	case .Dialogue:
-		draw_hud(g)
+		// Settle the room back a stop so the words carry the screen.
+		rl.DrawRectangleRec(
+			{0, 0, f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())},
+			fade(COL_INK, 0.34),
+		)
 		draw_dialogue(g)
+		draw_toasts(g)
 	case .Sheet:
-		draw_hud(g)
 		draw_sheet(g)
+		draw_toasts(g)
 	case .Game_Over:
 		draw_game_over(g)
 	}
@@ -430,12 +403,10 @@ draw_title :: proc(g: ^Game) {
 		rl.DrawRectangleRec({0, 0, sw, sh}, fade(rl.BLACK, 0.78))
 	}
 
-	// A dark, painted-feeling veil keeps the words readable while letting the
-	// crime scene keep breathing at the edges of the screen.
 	for i := 0; i < 9; i += 1 {
 		t := f32(i) / 8.0
 		inset := t * 38
-		rl.DrawRectangleLinesEx({inset, inset, sw - inset*2, sh - inset*2}, 18, fade(COL_INK, 0.055))
+		rl.DrawRectangleLinesEx({inset, inset, sw - inset * 2, sh - inset * 2}, 18, fade(COL_INK, 0.055))
 	}
 	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_INK, 0.38))
 	panel_w := math.min(sw * 0.56, 780)
@@ -503,4 +474,83 @@ draw_game_over :: proc(g: ^Game) {
 	prompt := "[enter] wake up again"
 	pm := measure(g.font_small, prompt, 18)
 	draw_text(g.font_small, prompt, {(sw - pm.x) * 0.5, y}, 18, COL_SYSTEM, 1.4)
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot driver
+// ---------------------------------------------------------------------------
+
+// Drives the game through a fixed sequence and captures each screen, so the
+// visuals can be checked without a human at the keyboard.
+screenshot_script :: proc(g: ^Game, frame: int) -> bool {
+	teleport :: proc(g: ^Game, x, y, facing: f32) {
+		g.player_ent.pos = {x, y}
+		g.player_ent.vel = {0, 0}
+		g.player_ent.facing = facing
+		camera_snap(&g.camera, g.player_ent.pos)
+	}
+
+	switch frame {
+	case 30:
+		rl.TakeScreenshot("shot_1_title.png")
+	case 40:
+		enter_world(g)
+		flag_set(g, "sysadmin_present", true)
+	case 44:
+		// Where you wake up, on the floor, in the middle of the room.
+		teleport(g, 12.5, 15.5, math.PI * 0.5)
+	case 75:
+		rl.TakeScreenshot("shot_2_wake_spot.png")
+	case 80:
+		// Walking: velocity set so the walk cycle and the camera lead are live.
+		g.player_ent.pos = {10.0, 12.0}
+		g.player_ent.vel = {2.6, 1.8}
+		g.player_ent.facing = 0.6
+	case 90:
+		rl.TakeScreenshot("shot_3_walking.png")
+	case 95:
+		// Standing at Priya's desk: the interaction prompt should be up.
+		teleport(g, 6.4, 11.6, -math.PI * 0.5)
+	case 125:
+		rl.TakeScreenshot("shot_4_prompt.png")
+	case 130:
+		// The rack row, to check the lighting and the LED detail.
+		teleport(g, 20.5, 6.6, -math.PI * 0.5)
+	case 160:
+		rl.TakeScreenshot("shot_5_racks.png")
+	case 165:
+		// The corridor, to prove the map keeps going past the room.
+		teleport(g, 20.0, 28.0, 0)
+	case 195:
+		rl.TakeScreenshot("shot_6_corridor.png")
+	case 200:
+		teleport(g, 6.4, 11.6, -math.PI * 0.5)
+		dialogue_start(g, &g.script, "the_body")
+		game_set_mode(g, .Dialogue)
+	case 204:
+		dialogue_skip_reveal(&g.dialogue)
+	case 225:
+		rl.TakeScreenshot("shot_7_dialogue.png")
+	case 230:
+		flag_set(g, "has_headphones", true)
+		dialogue_start(g, &g.script, "whiteboard_hand")
+	case 234:
+		dialogue_skip_reveal(&g.dialogue)
+		if len(g.dialogue.options) > 0 {
+			dialogue_select(g, 0)
+		}
+	case 255:
+		rl.TakeScreenshot("shot_8_check.png")
+	case 260:
+		dialogue_finish_check(g)
+		dialogue_close(g)
+		g.pending_level_ups = 2
+		g.sheet_tab = .Skills
+		game_set_mode(g, .Sheet)
+	case 280:
+		rl.TakeScreenshot("shot_9_skills.png")
+	case 290:
+		return true
+	}
+	return false
 }

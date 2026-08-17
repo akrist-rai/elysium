@@ -1,6 +1,6 @@
 # Hack The Plot
 
-An isometric narrative RPG in **Odin + Raylib**, built in the shape of *Disco
+A top-down 2D RPG in **Odin + Raylib**, built in the shape of *Disco
 Elysium*: 2d6 white and red skill checks with every modifier shown, 24 skills
 that interrupt you as internal voices, passive checks you only hear when you
 pass them, a Thought Cabinet, and Health/Morale instead of hit points.
@@ -79,14 +79,14 @@ OpenGL 3.3 backend on all three platforms.
 
 | | |
 |---|---|
-| Left click | walk there, or click a glowing orb to examine it |
-| Right / middle drag, WASD | pan the camera |
+| `W` `A` `S` `D`, arrows | walk. The camera follows you and leads where you are going |
+| `E` | look at, or speak to, whatever you are standing next to |
 | Scroll | zoom (world) / scroll the log (dialogue) |
 | `1`–`9`, click | choose a dialogue option |
 | `Space` | skip the typewriter, or continue |
 | `Enter` | commit a check, then live with it |
 | `Esc` | back out of a check *before* you roll; close a screen |
-| `C` `T` `J` `I` | skills, thoughts, journal, pockets |
+| `Tab` `C` `T` `J` `I` | skills, thoughts, journal, pockets |
 | `F5` | hot-reload all content without losing the run |
 | `F6` | toggle the painterly shader (useful for seeing what it does) |
 | `F2` | save |
@@ -183,18 +183,58 @@ src/
   dialogue.odin  graph runtime, conditions, effects, passives
   script.odin    .plot parser and validator
   defs.odin      .defs parser for thoughts/items/tasks
-  world.odin nav.odin isocam.odin scene_server_room.odin
-  render.odin painterly.odin    depth-sorted primitives + post pass
-  ui_*.odin      dialogue panel, check popup, HUD, sheets
+  tilemap.odin   the .map parser: one character per tile
+  scene.odin     hangs lights, floor marks, people and interactables on the grid
+  world.odin     WASD movement, collision, proximity interaction
+  camera.odin    the follow camera
+  nav.odin       A*, used by the one NPC who wanders
+  render.odin painterly.odin    top-down passes + post pass
+  ui_*.odin      dialogue panel, check popup, contextual prompts, sheets
   headless.odin  the --test harness
 assets/shaders/painterly.fs     brush wobble, bloom, grade, grain
-content/                        all of the writing
+content/                        all of the writing, and the floor plan
 ```
 
-The painterly look is entirely procedural — isometric boxes with per-face
-lighting, then one fragment shader that displaces sampling by fbm noise so
-edges wobble, blooms the monitors, grades shadows cold and highlights sodium,
-and lays grain over the top. There are no art assets to ship.
+The look is entirely procedural — there are no art assets for the world at all.
+The room is drawn in three passes: the floor, then everything standing on it
+sorted by where its base meets the ground, then a light map multiplied over the
+top. Every light in the building comes from something you can see: a tube in the
+ceiling, the face of a rack, a screen nobody switched off. Over that sits one
+fragment shader that displaces sampling by fbm noise so edges wobble, blooms the
+monitors, grades shadows cold and highlights sodium, and lays grain on top.
+
+Two rules the renderer is built around, both learned the hard way:
+
+- **Framing is defined in tiles, not pixels.** The camera derives its scale from
+  the window height, so the same amount of room is on screen on a 900px laptop
+  panel and a 1662px HiDPI one. A fixed pixels-per-tile just means a sharper
+  display gets a smaller character.
+- **Nothing that varies per tile may be a hard step.** Floor wear is sampled at
+  tile *corners* and drawn as a gradient, so neighbours share their values
+  exactly. A per-tile constant is invisible on its own, but the painterly pass
+  preserves edges by design and will faithfully turn every one of those steps
+  into a crisp line — which reads as graph paper.
+
+## The floor plan is content too
+
+`content/map.txt` is the building, one character per tile, and it reloads with
+F5 along with the writing — you can rearrange the room without losing your run.
+
+```
+;   #  wall            X  doorway         @  player spawn
+;   .  server floor    ,  corridor        :  office carpet
+;   *  floor, with a fluorescent tube in the ceiling above it
+;   R  server rack     D  desk            d  low workbench
+;   c  chair           B  crates          =  shelving        ~  cable spool
+;   P  printer         W  whiteboard      S  wall display    N  notice board
+;   e  exit sign
+```
+
+`--test` treats it exactly like the writing: it has to parse, the spawn has to
+be somewhere you can stand, every room has to be reachable on foot from where
+you wake up, and every single interactable has to have somewhere to stand next
+to it. A case whose evidence is behind a wall is as broken as one that jumps to
+a node that does not exist.
 
 ## What is not in this pass
 

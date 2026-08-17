@@ -269,11 +269,17 @@ apply_effect :: proc(g: ^Game, e: Effect) {
 		flag_set(g, e.id, false)
 	case .Health:
 		g.player.health = clamp(g.player.health + e.value, 0, health_max(g.player))
+		// The bars are not on screen any more, so a change has to announce
+		// itself rather than waiting to be noticed in a corner.
+		vitals_reveal(g)
+		toast_push(g, fmt.tprintf("HEALTH %+d", e.value), COL_HEALTH)
 		if e.value < 0 {
 			g.damage_flash = 0.6
 		}
 	case .Morale:
 		g.player.morale = clamp(g.player.morale + e.value, 0, morale_max(g.player))
+		vitals_reveal(g)
+		toast_push(g, fmt.tprintf("MORALE %+d", e.value), COL_MORALE)
 		if e.value < 0 {
 			g.damage_flash = 0.6
 		}

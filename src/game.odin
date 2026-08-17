@@ -44,15 +44,19 @@ Game :: struct {
 	// --- runtime ----------------------------------------------------------
 	dialogue:   Dialogue,
 	scene:      Scene,
-	player_ent: Player,
-	camera:     Iso_Camera,
+	player_ent: Actor,
+	camera:     World_Camera,
 
 	hovered_interactable: int,
 	orb_phase:            f32,
-	click_marker:         rl.Vector2,
-	click_marker_life:    f32,
 	damage_flash:         f32,
 	pending_level_ups:    int,
+
+	// --- transient, contextual UI ----------------------------------------
+	// Nothing in this group is on screen unless it has just changed.
+	toasts:        [dynamic]Toast,
+	vitals_reveal: f32,
+	controls_hint: f32,
 
 	// --- presentation -----------------------------------------------------
 	font:        rl.Font,
@@ -66,9 +70,8 @@ Game :: struct {
 	sysadmin_portrait_loaded: bool,
 	priya_portrait: rl.Texture2D,
 	priya_portrait_loaded: bool,
-	world_art: rl.Texture2D,
-	world_art_loaded: bool,
 	scene_rt:    rl.RenderTexture2D,
+	light_rt:    rl.RenderTexture2D,
 	painterly:   Painterly,
 	sheet_tab:   Sheet_Tab,
 	sheet_scroll: f32,
@@ -81,6 +84,10 @@ Game :: struct {
 	reload_notice: f32,
 	game_over_reason: string,
 	headless:     bool,
+	// Set by --screenshot. The capture run drives itself, so live keyboard and
+	// mouse input is ignored: a stray keystroke inherited from the launching
+	// terminal must not decide what the captured frames contain.
+	scripted:     bool,
 }
 
 game_init_state :: proc(g: ^Game) {
@@ -89,8 +96,8 @@ game_init_state :: proc(g: ^Game) {
 	g.check_records = make(map[string]Check_Record)
 	g.passive_results = make(map[string]bool)
 	g.load_errors = make([dynamic]string)
+	g.toasts = make([dynamic]Toast)
 	g.hovered_interactable = -1
-	g.player_ent.pending_interactable = -1
 
 	inventory_init(&g.inventory)
 	cabinet_init(&g.cabinet)
@@ -124,6 +131,19 @@ game_load_content :: proc(g: ^Game) -> bool {
 	g.defs = defs
 	for e in def_errors {
 		append(&g.load_errors, fmt.aprintf("%s:%d  %s", e.file, e.line, e.msg))
+	}
+
+	// The floor plan is content too, so F5 rebuilds the room along with the
+	// writing. Anyone left standing inside a wall by an edit gets nudged out.
+	map_errors := scene_build(&g.scene, g.content_dir)
+	for e in map_errors {
+		append(&g.load_errors, fmt.aprintf("%s:%d  %s", e.file, e.line, e.msg))
+	}
+	if g.scene.built {
+		camera_set_bounds(&g.camera, g.scene.grid.w, g.scene.grid.h)
+		if tilemap_blocked_at(&g.scene.grid, g.player_ent.pos.x, g.player_ent.pos.y) {
+			g.player_ent.pos = g.scene.spawn
+		}
 	}
 
 	g.item_defs = g.defs.items
